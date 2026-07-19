@@ -13,7 +13,7 @@ Controls:
 
 The map-selection screen is a local sandbox. Use Tab/Shift+Tab to change maps, WASD to drive, Space to fire, and G to throw grenades before creating the game with Enter. Wall damage and blast effects work in the sandbox without starting a room.
 
-Walls create a strong friction/dissipation field as players approach them. Regular bullets chip small holes into walls; grenades travel through walls, then damage nearby players and carve a larger opening when they detonate.
+Walls create a strong friction/dissipation field as players approach them. Regular bullets keep flying until they hit a player or wall, or leave the arena. Wall impacts erase pixels from both the visible map and its collision raster, so repeated shots can open a passage. Grenades travel through walls, then damage nearby players and carve a larger opening when they detonate.
 
 Create a room with Enter, then share the invite URL with the second player. A match starts after a three-second countdown. The first player to reach the configured death limit loses.
 

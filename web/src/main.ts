@@ -10,6 +10,12 @@ type MapSummary = {
   previewSpawnX: number;
   previewSpawnY: number;
   previewPlayerColor: string;
+  metroStations: MapLocation[];
+};
+
+type MapLocation = {
+  x: number;
+  y: number;
 };
 
 type RoomPhase = "lobby" | "countdown" | "playing" | "ended";
@@ -165,12 +171,12 @@ const BRAKING = 360;
 const FRICTION = 150;
 const TURN_SPEED = 3.4;
 const BULLET_SPEED = 440;
-const BULLET_LIFETIME_SECONDS = 2.2;
 const FIRE_COOLDOWN_SECONDS = 0.14;
 const BULLET_CRATER_RADIUS = 5;
 const GRENADE_SPEED = 285;
 const GRENADE_LIFETIME_SECONDS = 1.15;
 const GRENADE_COOLDOWN_SECONDS = 2;
+const METRO_COOLDOWN_SECONDS = 1.5;
 const GRENADE_CRATER_RADIUS = 46;
 const GRENADE_BLAST_RADIUS = 72;
 const WALL_FIELD_RADIUS = 38;
@@ -237,6 +243,7 @@ let sandboxNextProjectileId = -1;
 let sandboxNextBlastId = -1;
 let sandboxFireCooldown = 0;
 let sandboxGrenadeCooldown = 0;
+let localMetroCooldown = METRO_COOLDOWN_SECONDS;
 
 renderGameShell();
 
@@ -692,6 +699,7 @@ function resetSandbox() {
   sandboxCraters = [];
   sandboxFireCooldown = 0;
   sandboxGrenadeCooldown = 0;
+  localMetroCooldown = METRO_COOLDOWN_SECONDS;
   blastEffects = [];
 }
 
@@ -951,7 +959,10 @@ function updateSandbox(deltaSeconds: number) {
     spawnSandboxProjectile("bullet");
     sandboxFireCooldown = FIRE_COOLDOWN_SECONDS;
   }
-  if (activeKeys.has("Grenade") && sandboxGrenadeCooldown <= 0) {
+  if (
+    (activeKeys.has("ArrowDown") || activeKeys.has("Grenade")) &&
+    sandboxGrenadeCooldown <= 0
+  ) {
     spawnSandboxProjectile("grenade");
     sandboxGrenadeCooldown = GRENADE_COOLDOWN_SECONDS;
   }
@@ -967,17 +978,25 @@ function updateSandbox(deltaSeconds: number) {
     for (let step = 0; step < steps; step += 1) {
       projectile.x += stepX;
       projectile.y += stepY;
+      if (isOutsideMap(projectile.x, projectile.y)) {
+        consumed = true;
+        break;
+      }
       if (projectile.kind === "bullet" && isWallPixel(projectile.x, projectile.y)) {
-        if (!isOutsideMap(projectile.x, projectile.y)) {
-          carveSandboxWall(projectile.x, projectile.y, BULLET_CRATER_RADIUS);
-        }
+        carveSandboxWall(projectile.x, projectile.y, BULLET_CRATER_RADIUS);
         consumed = true;
         break;
       }
     }
 
-    projectile.lifetime -= deltaSeconds;
-    if (projectile.kind === "grenade" && projectile.lifetime <= 0) {
+    if (projectile.kind === "grenade") {
+      projectile.lifetime -= deltaSeconds;
+    }
+    if (
+      projectile.kind === "grenade" &&
+      !consumed &&
+      projectile.lifetime <= 0
+    ) {
       carveSandboxWall(projectile.x, projectile.y, GRENADE_CRATER_RADIUS);
       blastEffects.push({
         id: sandboxNextBlastId,
@@ -989,7 +1008,7 @@ function updateSandbox(deltaSeconds: number) {
       sandboxNextBlastId -= 1;
       consumed = true;
     }
-    if (!consumed && projectile.lifetime > 0) {
+    if (!consumed) {
       remaining.push(projectile);
     }
   }
@@ -1008,21 +1027,13 @@ function spawnSandboxProjectile(kind: "bullet" | "grenade") {
     kind,
     lifetime: kind === "grenade"
       ? GRENADE_LIFETIME_SECONDS
-      : BULLET_LIFETIME_SECONDS,
+      : Number.POSITIVE_INFINITY,
   });
   sandboxNextProjectileId -= 1;
 }
 
 function carveSandboxWall(x: number, y: number, radius: number) {
-  const nearby = sandboxCraters.find((crater) => {
-    const distanceSquared = (crater.x - x) ** 2 + (crater.y - y) ** 2;
-    return distanceSquared <= (crater.radius + radius) ** 2 * 0.3;
-  });
-  if (nearby) {
-    nearby.radius = Math.max(nearby.radius, radius);
-  } else {
-    sandboxCraters.push({ x, y, radius });
-  }
+  sandboxCraters.push({ x, y, radius });
   syncWallCraters(sandboxCraters);
 }
 
@@ -1071,6 +1082,7 @@ function updateVehicle(deltaSeconds: number) {
 }
 
 function simulateClientVehicle(deltaSeconds: number) {
+  localMetroCooldown = Math.max(0, localMetroCooldown - deltaSeconds);
   const turnInput =
     Number(activeKeys.has("ArrowRight")) - Number(activeKeys.has("ArrowLeft"));
   const movingFactor =
@@ -1116,6 +1128,24 @@ function simulateClientVehicle(deltaSeconds: number) {
   }
   if (collided) {
     vehicle.speed *= 0.18;
+  }
+
+  if (localMetroCooldown <= 0) {
+    const stations = activeMap?.metroStations ?? [];
+    const sourceIndex = stations.findIndex(
+      (station) =>
+        (station.x - vehicle.x) ** 2 + (station.y - vehicle.y) ** 2 <=
+        (PLAYER_RADIUS + 18) ** 2,
+    );
+    if (sourceIndex >= 0 && stations.length >= 2) {
+      const destination = stations[(sourceIndex + 1) % stations.length];
+      if (destination) {
+        vehicle.x = destination.x;
+        vehicle.y = destination.y;
+        vehicle.speed = 0;
+        localMetroCooldown = METRO_COOLDOWN_SECONDS;
+      }
+    }
   }
 }
 

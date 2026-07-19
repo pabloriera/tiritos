@@ -28,14 +28,14 @@ Clients send only authenticated, sequenced controls: accelerate, brake, turn lef
 2. Apply swept player movement against a 24-sample collision shell. A pixel-derived proximity field dissipates speed near walls, and axis-separated steps allow sliding without tunneling.
 3. Move players entering a metro square to the next station, with a cooldown.
 4. Create fire-rate-limited bullets and cooldown-limited grenades.
-5. Sweep bullets along their traveled path for wall/player impacts. Bullet impacts append small authoritative wall craters; grenades ignore walls in flight and append a larger crater plus radial damage when their fuse expires.
+5. Sweep bullets along their traveled path for wall/player impacts. Bullet impacts clear circular regions from the room's authoritative raster wall mask and append matching damage operations for clients; grenades ignore walls in flight and clear a larger region plus radial damage when their fuse expires. Regular bullets have no mid-air timer and remain in flight until they hit a wall or player, or leave the arena.
 6. Apply damage, deaths, kills, respawn timers, and the death-limit win condition.
 
 The room lifecycle is `lobby → countdown → playing → ended`. A rematch returns an ended room to countdown with fresh scores and positions.
 
 The client advances bullet and grenade circles on every animation frame using the same kind-specific speed and heading as the server. Periodic snapshots reconcile accumulated error without leaving projectiles frozen between room polls. Authoritative crater snapshots update a cached map canvas and its collision pixels only when the crater list changes.
 
-Before room creation, the client runs a local sandbox over the selected map. Tab changes map packages, WASD predicts the same swept vehicle physics, and Space/G exercise local bullet, grenade, crater, and blast behavior without creating server state.
+Before room creation, the client runs a local sandbox over the selected map. Tab changes map packages, WASD uses the same swept vehicle, wall, and metro physics, and Space/G exercise local bullet, grenade, raster damage, and blast behavior without creating server state.
 
 ## Death Rules
 

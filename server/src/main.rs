@@ -33,7 +33,6 @@ const TURN_SPEED: f32 = 3.4;
 const FIRE_COOLDOWN_SECONDS: f32 = 0.14;
 const BULLET_RADIUS: f32 = 3.0;
 const BULLET_SPEED: f32 = 440.0;
-const BULLET_LIFETIME_SECONDS: f32 = 2.2;
 const BULLET_DAMAGE: u16 = 34;
 const GRENADE_SPEED: f32 = 285.0;
 const GRENADE_LIFETIME_SECONDS: f32 = 1.15;
@@ -43,7 +42,6 @@ const BULLET_CRATER_RADIUS: f32 = 5.0;
 const GRENADE_CRATER_RADIUS: f32 = 46.0;
 const BLAST_VISIBLE_TICKS: u64 = TICK_RATE_HZ / 2;
 const WALL_FIELD_RADIUS: f32 = 38.0;
-const MAX_WALL_CRATERS: usize = 256;
 const COUNTDOWN_TICKS: u64 = TICK_RATE_HZ * 3;
 const RESPAWN_TICKS: u64 = TICK_RATE_HZ * 2;
 const SPAWN_PROTECTION_TICKS: u64 = TICK_RATE_HZ;
@@ -133,7 +131,7 @@ struct MetroStationDefinition {
     location: MapLocation,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 struct MapLocation {
     x: f32,
     y: f32,
@@ -199,6 +197,7 @@ struct MapSummary {
     preview_spawn_x: f32,
     preview_spawn_y: f32,
     preview_player_color: String,
+    metro_stations: Vec<MapLocation>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -215,6 +214,8 @@ struct Room {
     players: Vec<PlayerSummary>,
     bullets: Vec<BulletSummary>,
     wall_craters: Vec<WallCrater>,
+    #[serde(skip_serializing)]
+    wall_pixels: Vec<bool>,
     blasts: Vec<BlastSummary>,
     feed: Vec<String>,
     #[serde(skip_serializing)]
@@ -521,6 +522,12 @@ async fn list_maps(State(state): State<AppState>) -> Json<Vec<MapSummary>> {
                 preview_spawn_x: map.spawn_for(1, 0).0,
                 preview_spawn_y: map.spawn_for(1, 0).1,
                 preview_player_color: map.player_color(1).to_owned(),
+                metro_stations: map
+                    .manifest
+                    .metro_stations
+                    .iter()
+                    .map(|station| station.location)
+                    .collect(),
                 id: map.id,
                 name: map.name,
                 image_url: map.image_url,
@@ -579,6 +586,7 @@ async fn create_room(
         players: vec![host],
         bullets: Vec::new(),
         wall_craters: Vec::new(),
+        wall_pixels: map.compiled.wall_pixels(),
         blasts: Vec::new(),
         feed: Vec::new(),
         next_bullet_id: 1,
@@ -742,10 +750,11 @@ async fn leave_room(
         room.winner_slot = None;
         room.bullets.clear();
         room.wall_craters.clear();
+        let map = state.maps.get(&room.map_id).expect("room map");
+        room.wall_pixels = map.compiled.wall_pixels();
         room.blasts.clear();
         room.feed.clear();
         if let Some(host) = room.players.first_mut() {
-            let map = state.maps.get(&room.map_id).expect("room map");
             host.kills = 0;
             host.deaths = 0;
             respawn_player(host, map, room.tick);
@@ -795,6 +804,7 @@ async fn rematch_room(
     room.winner_slot = None;
     room.bullets.clear();
     room.wall_craters.clear();
+    room.wall_pixels = map.compiled.wall_pixels();
     room.blasts.clear();
     room.feed.clear();
     for player in &mut room.players {
@@ -872,7 +882,7 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
 
     let mut spawned = Vec::new();
     let mut respawned = Vec::new();
-    let wall_craters = &room.wall_craters;
+    let wall_pixels = &room.wall_pixels;
     for player in &mut room.players {
         if player.state == PlayerState::Respawning {
             if room.tick >= player.respawn_at_tick.unwrap_or(u64::MAX) {
@@ -885,7 +895,7 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
         player.fire_cooldown = (player.fire_cooldown - dt).max(0.0);
         player.metro_cooldown = (player.metro_cooldown - dt).max(0.0);
         player.grenade_cooldown = (player.grenade_cooldown - dt).max(0.0);
-        simulate_player_movement(player, map, wall_craters, dt);
+        simulate_player_movement(player, map, wall_pixels, dt);
 
         if player.metro_cooldown <= 0.0
             && let Some((x, y)) = map.metro_destination(player.x, player.y, PLAYER_RADIUS)
@@ -905,7 +915,7 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
                 heading: player.heading,
                 radius: BULLET_RADIUS,
                 kind: ProjectileKind::Bullet,
-                lifetime: BULLET_LIFETIME_SECONDS,
+                lifetime: f32::INFINITY,
             });
             room.next_bullet_id += 1;
             player.fire_cooldown = FIRE_COOLDOWN_SECONDS;
@@ -935,7 +945,7 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
 fn simulate_player_movement(
     player: &mut PlayerSummary,
     map: &GameMap,
-    craters: &[WallCrater],
+    wall_pixels: &[bool],
     dt: f32,
 ) {
     let turn = f32::from(player.input.turn_right) - f32::from(player.input.turn_left);
@@ -949,7 +959,7 @@ fn simulate_player_movement(
         player.speed = (player.speed - FRICTION * dt).max(0.0);
     }
 
-    let clearance = wall_clearance(map, craters, player.x, player.y, WALL_FIELD_RADIUS);
+    let clearance = wall_clearance(map, wall_pixels, player.x, player.y, WALL_FIELD_RADIUS);
     let field_strength =
         ((clearance - PLAYER_RADIUS) / (WALL_FIELD_RADIUS - PLAYER_RADIUS)).clamp(0.0, 1.0);
     let dissipation = 1.0 - (1.0 - field_strength).powi(2) * (dt * 18.0).min(0.85);
@@ -961,12 +971,12 @@ fn simulate_player_movement(
     let step_y = player.heading.sin() * distance / steps as f32;
     let mut collided = false;
     for _ in 0..steps {
-        if can_occupy_dynamic(map, craters, player.x + step_x, player.y, PLAYER_RADIUS) {
+        if can_occupy_dynamic(map, wall_pixels, player.x + step_x, player.y, PLAYER_RADIUS) {
             player.x += step_x;
         } else {
             collided = true;
         }
-        if can_occupy_dynamic(map, craters, player.x, player.y + step_y, PLAYER_RADIUS) {
+        if can_occupy_dynamic(map, wall_pixels, player.x, player.y + step_y, PLAYER_RADIUS) {
             player.y += step_y;
         } else {
             collided = true;
@@ -977,28 +987,39 @@ fn simulate_player_movement(
     }
 }
 
-fn is_wall_dynamic(map: &GameMap, craters: &[WallCrater], x: f32, y: f32) -> bool {
-    map.compiled.is_wall(x, y)
-        && !craters
-            .iter()
-            .any(|crater| distance_squared(crater.x, crater.y, x, y) <= crater.radius.powi(2))
+fn is_outside_arena(map: &GameMap, x: f32, y: f32) -> bool {
+    !x.is_finite()
+        || !y.is_finite()
+        || x < 0.0
+        || y < 0.0
+        || x >= f32::from(map.compiled.width)
+        || y >= f32::from(map.compiled.height)
 }
 
-fn can_occupy_dynamic(map: &GameMap, craters: &[WallCrater], x: f32, y: f32, radius: f32) -> bool {
+fn is_wall_dynamic(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32) -> bool {
+    if is_outside_arena(map, x, y) {
+        return true;
+    }
+    let pixel_x = x.floor() as usize;
+    let pixel_y = y.floor() as usize;
+    wall_pixels[pixel_y * usize::from(map.compiled.width) + pixel_x]
+}
+
+fn can_occupy_dynamic(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32, radius: f32) -> bool {
     const SAMPLES: usize = 24;
-    !is_wall_dynamic(map, craters, x, y)
+    !is_wall_dynamic(map, wall_pixels, x, y)
         && (0..SAMPLES).all(|index| {
             let angle = index as f32 * std::f32::consts::TAU / SAMPLES as f32;
             !is_wall_dynamic(
                 map,
-                craters,
+                wall_pixels,
                 x + angle.cos() * radius,
                 y + angle.sin() * radius,
             )
         })
 }
 
-fn wall_clearance(map: &GameMap, craters: &[WallCrater], x: f32, y: f32, maximum: f32) -> f32 {
+fn wall_clearance(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32, maximum: f32) -> f32 {
     const RAYS: usize = 24;
     let mut distance = 0.0;
     while distance <= maximum {
@@ -1006,7 +1027,7 @@ fn wall_clearance(map: &GameMap, craters: &[WallCrater], x: f32, y: f32, maximum
             let angle = ray as f32 * std::f32::consts::TAU / RAYS as f32;
             if is_wall_dynamic(
                 map,
-                craters,
+                wall_pixels,
                 x + angle.cos() * distance,
                 y + angle.sin() * distance,
             ) {
@@ -1039,11 +1060,15 @@ fn update_bullets(room: &mut Room, map: &GameMap, dt: f32) {
         for _ in 0..steps {
             bullet.x += step_x;
             bullet.y += step_y;
+            if is_outside_arena(map, bullet.x, bullet.y) {
+                consumed = true;
+                break;
+            }
             if bullet.kind == ProjectileKind::Bullet
-                && is_wall_dynamic(map, &room.wall_craters, bullet.x, bullet.y)
+                && is_wall_dynamic(map, &room.wall_pixels, bullet.x, bullet.y)
             {
                 consumed = true;
-                carve_wall(room, bullet.x, bullet.y, BULLET_CRATER_RADIUS);
+                carve_wall(room, map, bullet.x, bullet.y, BULLET_CRATER_RADIUS);
                 break;
             }
             if bullet.kind == ProjectileKind::Bullet
@@ -1062,12 +1087,14 @@ fn update_bullets(room: &mut Room, map: &GameMap, dt: f32) {
             }
         }
 
-        bullet.lifetime -= dt;
-        if bullet.kind == ProjectileKind::Grenade && bullet.lifetime <= 0.0 {
-            explode_grenade(room, bullet.x, bullet.y, bullet.owner_slot);
+        if bullet.kind == ProjectileKind::Grenade {
+            bullet.lifetime -= dt;
+        }
+        if bullet.kind == ProjectileKind::Grenade && !consumed && bullet.lifetime <= 0.0 {
+            explode_grenade(room, map, bullet.x, bullet.y, bullet.owner_slot);
             consumed = true;
         }
-        if !consumed && bullet.lifetime > 0.0 {
+        if !consumed {
             remaining.push(bullet);
         }
     }
@@ -1076,21 +1103,30 @@ fn update_bullets(room: &mut Room, map: &GameMap, dt: f32) {
     }
 }
 
-fn carve_wall(room: &mut Room, x: f32, y: f32, radius: f32) {
-    if let Some(crater) = room.wall_craters.iter_mut().find(|crater| {
-        distance_squared(crater.x, crater.y, x, y) <= (crater.radius + radius).powi(2) * 0.3
-    }) {
-        crater.radius = crater.radius.max(radius);
-        return;
+fn carve_wall(room: &mut Room, map: &GameMap, x: f32, y: f32, radius: f32) {
+    let minimum_x = (x - radius).floor().max(0.0) as usize;
+    let maximum_x = (x + radius).ceil().min(f32::from(map.compiled.width) - 1.0) as usize;
+    let minimum_y = (y - radius).floor().max(0.0) as usize;
+    let maximum_y = (y + radius)
+        .ceil()
+        .min(f32::from(map.compiled.height) - 1.0) as usize;
+    let radius_squared = radius.powi(2);
+    let width = usize::from(map.compiled.width);
+
+    for pixel_y in minimum_y..=maximum_y {
+        for pixel_x in minimum_x..=maximum_x {
+            if distance_squared(pixel_x as f32, pixel_y as f32, x, y) > radius_squared {
+                continue;
+            }
+            let pixel = &mut room.wall_pixels[pixel_y * width + pixel_x];
+            *pixel = false;
+        }
     }
     room.wall_craters.push(WallCrater { x, y, radius });
-    if room.wall_craters.len() > MAX_WALL_CRATERS {
-        room.wall_craters.remove(0);
-    }
 }
 
-fn explode_grenade(room: &mut Room, x: f32, y: f32, owner_slot: u8) {
-    carve_wall(room, x, y, GRENADE_CRATER_RADIUS);
+fn explode_grenade(room: &mut Room, map: &GameMap, x: f32, y: f32, owner_slot: u8) {
+    carve_wall(room, map, x, y, GRENADE_CRATER_RADIUS);
     room.blasts.push(BlastSummary {
         id: room.next_blast_id,
         x,
@@ -1434,6 +1470,7 @@ mod tests {
             ],
             bullets: Vec::new(),
             wall_craters: Vec::new(),
+            wall_pixels: map.compiled.wall_pixels(),
             blasts: Vec::new(),
             feed: Vec::new(),
             next_bullet_id: 1,
@@ -1443,6 +1480,7 @@ mod tests {
     }
 
     fn horizontal_wall_edge(map: &GameMap) -> (f32, f32) {
+        let wall_pixels = map.compiled.wall_pixels();
         for y in 20..u32::from(map.compiled.height) - 20 {
             for x in 20..u32::from(map.compiled.width) - 30 {
                 let wall_x = x as f32;
@@ -1452,7 +1490,7 @@ mod tests {
                     && map.compiled.is_wall(wall_x + 20.0, wall_y)
                     && can_occupy_dynamic(
                         map,
-                        &[],
+                        &wall_pixels,
                         wall_x - PLAYER_RADIUS - 2.0,
                         wall_y,
                         PLAYER_RADIUS,
@@ -1543,6 +1581,7 @@ mod tests {
     #[test]
     fn swept_movement_cannot_tunnel_through_a_wall() {
         let map = level_one();
+        let wall_pixels = map.compiled.wall_pixels();
         let (wall_x, wall_y) = horizontal_wall_edge(&map);
         let mut player = player_for_slot("TEST", 1, true, "One", "one".to_owned(), &map);
         player.x = wall_x - PLAYER_RADIUS - 2.0;
@@ -1551,12 +1590,12 @@ mod tests {
         player.speed = MAX_SPEED;
         player.input.accelerate = true;
 
-        simulate_player_movement(&mut player, &map, &[], 0.5);
+        simulate_player_movement(&mut player, &map, &wall_pixels, 0.5);
 
         assert!(player.x < wall_x - PLAYER_RADIUS + 0.1);
         assert!(can_occupy_dynamic(
             &map,
-            &[],
+            &wall_pixels,
             player.x,
             player.y,
             PLAYER_RADIUS
@@ -1589,10 +1628,73 @@ mod tests {
         assert!(map.compiled.is_wall(crater.x, crater.y));
         assert!(!is_wall_dynamic(
             &map,
-            &room.wall_craters,
+            &room.wall_pixels,
             crater.x,
             crater.y
         ));
+    }
+
+    #[test]
+    fn overlapping_impacts_keep_eating_new_wall_pixels() {
+        let map = level_one();
+        let (wall_x, wall_y) = horizontal_wall_edge(&map);
+        let mut room = test_room(&map);
+
+        carve_wall(&mut room, &map, wall_x + 5.0, wall_y, BULLET_CRATER_RADIUS);
+        carve_wall(&mut room, &map, wall_x + 11.0, wall_y, BULLET_CRATER_RADIUS);
+
+        assert_eq!(room.wall_craters.len(), 2);
+        assert!(!is_wall_dynamic(
+            &map,
+            &room.wall_pixels,
+            wall_x + 11.0,
+            wall_y
+        ));
+    }
+
+    #[test]
+    fn bullet_does_not_expire_in_mid_air() {
+        let map = level_one();
+        let mut room = test_room(&map);
+        let owner = room.players.remove(0);
+        room.players.clear();
+        room.players.push(owner);
+        room.bullets.push(BulletSummary {
+            id: 1,
+            owner_slot: 1,
+            x: room.players[0].x,
+            y: room.players[0].y,
+            heading: 0.0,
+            radius: BULLET_RADIUS,
+            kind: ProjectileKind::Bullet,
+            lifetime: 0.0,
+        });
+
+        update_bullets(&mut room, &map, TICK_SECONDS);
+
+        assert_eq!(room.bullets.len(), 1);
+        assert!(room.bullets[0].x > room.players[0].x);
+    }
+
+    #[test]
+    fn bullet_is_removed_after_leaving_the_arena() {
+        let map = level_one();
+        let mut room = test_room(&map);
+        room.bullets.push(BulletSummary {
+            id: 1,
+            owner_slot: 1,
+            x: f32::from(map.compiled.width) - 1.0,
+            y: f32::from(map.compiled.height) / 2.0,
+            heading: 0.0,
+            radius: BULLET_RADIUS,
+            kind: ProjectileKind::Bullet,
+            lifetime: f32::INFINITY,
+        });
+
+        update_bullets(&mut room, &map, TICK_SECONDS);
+
+        assert!(room.bullets.is_empty());
+        assert!(room.wall_craters.is_empty());
     }
 
     #[test]

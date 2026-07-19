@@ -14,6 +14,10 @@ pub struct ValidatedMap {
 }
 
 impl ValidatedMap {
+    pub fn wall_pixels(&self) -> Vec<bool> {
+        self.walls.clone()
+    }
+
     pub fn is_wall(&self, x: f32, y: f32) -> bool {
         if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
             return true;
