@@ -76,12 +76,12 @@ try {
   const previewBefore = await playerOne.executeScript(
     "return window.__paintArenaDebug.getState().vehicle",
   );
-  await holdKey(playerOne, "w", 300);
+  await holdKey(playerOne, Key.ARROW_UP, 300);
   const previewAfter = await playerOne.executeScript(
     "return window.__paintArenaDebug.getState().vehicle",
   );
   if (distance(previewBefore, previewAfter) < 1) {
-    throw new Error("WASD did not move the map preview player");
+    throw new Error("Arrow keys did not move the map preview player");
   }
 
   await playerOne.actions().keyDown(Key.SPACE).perform();
@@ -94,7 +94,7 @@ try {
   );
   await playerOne.actions().keyUp(Key.SPACE).perform();
 
-  await playerOne.actions().keyDown("g").perform();
+  await playerOne.actions().keyDown(Key.ARROW_DOWN).perform();
   await playerOne.wait(
     async () => playerOne.executeScript(
       "return window.__paintArenaDebug.getState().renderBullets.some((bullet) => bullet.kind === 'grenade')",
@@ -102,7 +102,7 @@ try {
     2_000,
     "Sandbox grenade was not created",
   );
-  await playerOne.actions().keyUp("g").perform();
+  await playerOne.actions().keyUp(Key.ARROW_DOWN).perform();
   await playerOne.wait(
     async () => playerOne.executeScript(
       "return window.__paintArenaDebug.getState().blastEffects.length > 0",
@@ -125,6 +125,29 @@ try {
   await playerOne.findElement(By.css('[data-tool="metro"]')).click();
   await drawDesignerGesture(playerOne, [[0.3, 0.3]]);
   await drawDesignerGesture(playerOne, [[0.7, 0.7]]);
+  await playerOne.findElement(By.css("#designer-preview")).click();
+  await waitForDebugState(playerOne, (state) => state.mode === "previewingDesign");
+  const designPreviewBefore = await playerOne.executeScript(
+    "return window.__paintArenaDebug.getState().vehicle",
+  );
+  await holdKey(playerOne, Key.ARROW_UP, 300);
+  const designPreviewAfter = await playerOne.executeScript(
+    "return window.__paintArenaDebug.getState().vehicle",
+  );
+  if (distance(designPreviewBefore, designPreviewAfter) < 1) {
+    throw new Error("Designer preview vehicle did not move");
+  }
+  await playerOne.actions().keyDown(Key.SPACE).perform();
+  await playerOne.wait(
+    async () => playerOne.executeScript(
+      "return window.__paintArenaDebug.getState().renderBullets.length > 0",
+    ),
+    2_000,
+    "Designer preview gun did not create a bullet",
+  );
+  await playerOne.actions().keyUp(Key.SPACE).perform();
+  await playerOne.findElement(By.css("#designer-preview")).click();
+  await waitForDebugState(playerOne, (state) => state.mode === "designingMap");
   await playerOne.findElement(By.css("#designer-save")).click();
   await playerOne.sleep(2_000);
   const designerResult = await playerOne.executeScript(`return {

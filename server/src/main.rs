@@ -34,7 +34,7 @@ const PLAYER_RADIUS: f32 = 10.0;
 const MAX_SPEED: f32 = 165.0;
 const ACCELERATION: f32 = 300.0;
 const BRAKING: f32 = 360.0;
-const FRICTION: f32 = 150.0;
+const FRICTION: f32 = 135.0;
 const TURN_SPEED: f32 = 3.4;
 const FIRE_COOLDOWN_SECONDS: f32 = 0.14;
 const BULLET_RADIUS: f32 = 3.0;
@@ -507,43 +507,47 @@ fn load_builtin_maps() -> HashMap<String, GameMap> {
         (
             "level1",
             "Level 1",
-            "/api/maps/level1/map.png?v=2",
+            "/api/maps/level1/map.png?v=3",
             include_bytes!("../../maps/builtin/level1/map.png").as_slice(),
             include_bytes!("../../maps/builtin/level1/map.json").as_slice(),
         ),
         (
             "switchback-basin",
             "Switchback Basin",
-            "/api/maps/switchback-basin/map.png?v=2",
+            "/api/maps/switchback-basin/map.png?v=3",
             include_bytes!("../../maps/builtin/switchback-basin/map.png").as_slice(),
             include_bytes!("../../maps/builtin/switchback-basin/map.json").as_slice(),
         ),
         (
             "clover-junction",
             "Clover Junction",
-            "/api/maps/clover-junction/map.png?v=2",
+            "/api/maps/clover-junction/map.png?v=3",
             include_bytes!("../../maps/builtin/clover-junction/map.png").as_slice(),
             include_bytes!("../../maps/builtin/clover-junction/map.json").as_slice(),
         ),
     ]
     .into_iter()
-    .map(|(id, name, image_url, image_bytes, manifest_bytes)| {
-        let compiled = decode_and_validate_png(image_bytes)
-            .unwrap_or_else(|error| panic!("invalid built-in map {id}: {error:?}"));
-        let manifest = serde_json::from_slice(manifest_bytes)
-            .unwrap_or_else(|error| panic!("invalid built-in map manifest {id}: {error}"));
-        (
-            id.to_owned(),
-            GameMap {
-                id: id.to_owned(),
-                name: name.to_owned(),
-                image_url: image_url.to_owned(),
-                image_bytes: Arc::new(image_bytes.to_vec()),
-                compiled: Arc::new(compiled),
-                manifest: Arc::new(manifest),
-            },
-        )
-    })
+    .map(
+        |(id, name, image_url, source_image_bytes, manifest_bytes)| {
+            let compiled = decode_and_validate_png(source_image_bytes)
+                .unwrap_or_else(|error| panic!("invalid built-in map {id}: {error:?}"));
+            let manifest: MapManifest = serde_json::from_slice(manifest_bytes)
+                .unwrap_or_else(|error| panic!("invalid built-in map manifest {id}: {error}"));
+            let image_bytes = render_custom_map_png(&compiled, &manifest)
+                .unwrap_or_else(|_| panic!("could not render built-in map {id}"));
+            (
+                id.to_owned(),
+                GameMap {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                    image_url: image_url.to_owned(),
+                    image_bytes: Arc::new(image_bytes),
+                    compiled: Arc::new(compiled),
+                    manifest: Arc::new(manifest),
+                },
+            )
+        },
+    )
     .collect()
 }
 
@@ -1845,6 +1849,15 @@ mod tests {
             map.metro_destination(1048.0, 215.0, PLAYER_RADIUS),
             Some((230.0, 367.0))
         );
+    }
+
+    #[test]
+    fn builtin_rendered_rasters_match_authoritative_collision() {
+        for map in load_builtin_maps().into_values() {
+            let rendered =
+                decode_and_validate_png(&map.image_bytes).expect("rendered built-in map");
+            assert_eq!(rendered, *map.compiled, "{} collision raster", map.id);
+        }
     }
 
     #[test]

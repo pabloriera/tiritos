@@ -216,6 +216,14 @@ body {
   display: none;
 }
 
+.preview-active .designer-name,
+.preview-active .tool-group,
+.preview-active .brush-control,
+.preview-active #designer-color,
+.preview-active #designer-random-color {
+  display: none;
+}
+
 .designer-name {
   width: 150px;
   padding: 0 7px;

@@ -101,6 +101,7 @@ type JoinRoomResponse = {
 type ClientMode =
   | "selectingMap"
   | "designingMap"
+  | "previewingDesign"
   | "creatingRoom"
   | "waiting"
   | "playing"
@@ -197,7 +198,7 @@ const PLAYER_RADIUS = 10;
 const MAX_SPEED = 165;
 const ACCELERATION = 300;
 const BRAKING = 360;
-const FRICTION = 150;
+const FRICTION = 135;
 const TURN_SPEED = 3.4;
 const BULLET_SPEED = 440;
 const FIRE_COOLDOWN_SECONDS = 0.14;
@@ -329,6 +330,7 @@ function renderGameShell() {
           <label class="brush-control">Size <input id="designer-brush" type="range" min="4" max="80" value="24"></label>
           <input id="designer-color" type="color" aria-label="Spawn color">
           <button id="designer-random-color" class="hud-button" type="button" title="Random spawn color">Random</button>
+          <button id="designer-preview" class="hud-button" type="button">Preview</button>
           <button id="designer-save" class="hud-button primary" type="button">Save</button>
           <button id="designer-cancel" class="hud-button" type="button">Cancel</button>
           <span id="designer-message" class="designer-message"></span>
@@ -371,6 +373,10 @@ function installKeyboardControls() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (activeMode === "previewingDesign") {
+        stopDesignerPreview();
+        return;
+      }
       if (activeMode === "designingMap") {
         exitDesignerMode();
         return;
@@ -430,12 +436,14 @@ function installDesignerControls() {
   const brushInput = document.querySelector<HTMLInputElement>("#designer-brush");
   const colorInput = document.querySelector<HTMLInputElement>("#designer-color");
   const randomButton = document.querySelector<HTMLButtonElement>("#designer-random-color");
+  const previewButton = document.querySelector<HTMLButtonElement>("#designer-preview");
   const saveButton = document.querySelector<HTMLButtonElement>("#designer-save");
   const cancelButton = document.querySelector<HTMLButtonElement>("#designer-cancel");
 
   designerButton?.addEventListener("click", enterDesignerMode);
   cancelButton?.addEventListener("click", exitDesignerMode);
   saveButton?.addEventListener("click", () => void saveDesignedMap());
+  previewButton?.addEventListener("click", toggleDesignerPreview);
   randomButton?.addEventListener("click", () => {
     if (!designerState || !colorInput) {
       return;
@@ -527,7 +535,7 @@ function enterDesignerMode() {
 }
 
 function exitDesignerMode() {
-  if (activeMode !== "designingMap") {
+  if (activeMode !== "designingMap" && activeMode !== "previewingDesign") {
     return;
   }
   designerState = null;
@@ -535,6 +543,92 @@ function exitDesignerMode() {
   resizeCanvas();
   void setActiveMap(maps[selectedMapIndex] ?? null);
   updateHud();
+}
+
+function toggleDesignerPreview() {
+  if (activeMode === "previewingDesign") {
+    stopDesignerPreview();
+  } else if (activeMode === "designingMap") {
+    startDesignerPreview();
+  }
+}
+
+function startDesignerPreview() {
+  if (!designerState || designerState.spawns.length === 0) {
+    if (designerState) {
+      designerState.message = "Add a spawn point before previewing.";
+      updateHud();
+    }
+    return;
+  }
+  const previewCanvas = buildDesignerPreviewCanvas(designerState);
+  const context = previewCanvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+  mapImage = null;
+  mapPixels = context.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+  dynamicMapCanvas = document.createElement("canvas");
+  dynamicMapCanvas.width = previewCanvas.width;
+  dynamicMapCanvas.height = previewCanvas.height;
+  const dynamicContext = dynamicMapCanvas.getContext("2d");
+  if (!dynamicContext) {
+    dynamicMapCanvas = null;
+    return;
+  }
+  dynamicContext.imageSmoothingEnabled = false;
+  dynamicContext.drawImage(previewCanvas, 0, 0);
+  dynamicMapPixels = dynamicContext.getImageData(
+    0,
+    0,
+    previewCanvas.width,
+    previewCanvas.height,
+  );
+  appliedWallCraters = [];
+  resetSandbox();
+  const spawn = designerState.spawns[0];
+  if (!spawn) {
+    return;
+  }
+  vehicle = { x: spawn.x, y: spawn.y, heading: 0, speed: 0 };
+  designerState.message = "Previewing unsaved map · Arrow keys · Space fire";
+  activeMode = "previewingDesign";
+  resizeCanvas();
+  updateHud();
+}
+
+function stopDesignerPreview() {
+  if (activeMode !== "previewingDesign" || !designerState) {
+    return;
+  }
+  resetSandbox();
+  designerState.message = "Draw walls; right-click a spawn or metro to remove it.";
+  activeMode = "designingMap";
+  resizeCanvas();
+  updateHud();
+}
+
+function buildDesignerPreviewCanvas(state: DesignerState) {
+  const preview = document.createElement("canvas");
+  preview.width = state.width;
+  preview.height = state.height;
+  const context = preview.getContext("2d");
+  if (!context) {
+    return preview;
+  }
+  context.imageSmoothingEnabled = false;
+  context.drawImage(state.canvas, 0, 0);
+  context.fillStyle = METRO_COLOR;
+  for (const metro of state.metros) {
+    context.fillRect(Math.round(metro.x) - 12, Math.round(metro.y) - 12, 25, 25);
+  }
+  for (const spawn of state.spawns) {
+    context.fillStyle = spawn.color;
+    context.beginPath();
+    context.arc(Math.round(spawn.x), Math.round(spawn.y), 9, 0, Math.PI * 2);
+    context.fill();
+  }
+  return preview;
 }
 
 function handleDesignerPointerDown(event: PointerEvent) {
@@ -1203,7 +1297,7 @@ function resetDynamicMap() {
 }
 
 function syncWallCraters(craters: WallCrater[]) {
-  if (!mapImage || !mapPixels) {
+  if (!mapPixels) {
     return;
   }
 
@@ -1299,7 +1393,7 @@ function updateRenderBullets(deltaSeconds: number) {
 }
 
 function updateSandbox(deltaSeconds: number) {
-  if (activeMode !== "selectingMap") {
+  if (!isSandboxMode()) {
     return;
   }
 
@@ -1310,7 +1404,7 @@ function updateSandbox(deltaSeconds: number) {
     sandboxFireCooldown = FIRE_COOLDOWN_SECONDS;
   }
   if (
-    (activeKeys.has("ArrowDown") || activeKeys.has("Grenade")) &&
+    activeKeys.has("ArrowDown") &&
     sandboxGrenadeCooldown <= 0
   ) {
     spawnSandboxProjectile("grenade");
@@ -1388,8 +1482,7 @@ function carveSandboxWall(x: number, y: number, radius: number) {
 }
 
 function isOutsideMap(x: number, y: number) {
-  const width = mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH;
-  const height = mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT;
+  const { width, height } = getCurrentMapDimensions();
   return x < 0 || y < 0 || x >= width || y >= height;
 }
 
@@ -1408,7 +1501,7 @@ function recordFrameSample(timestamp: number, deltaMs: number) {
 }
 
 function updateVehicle(deltaSeconds: number) {
-  if (activeMode === "selectingMap") {
+  if (isSandboxMode()) {
     simulateClientVehicle(deltaSeconds);
     return;
   }
@@ -1481,7 +1574,9 @@ function simulateClientVehicle(deltaSeconds: number) {
   }
 
   if (localMetroCooldown <= 0) {
-    const stations = activeMap?.metroStations ?? [];
+    const stations = activeMode === "previewingDesign"
+      ? designerState?.metros ?? []
+      : activeMap?.metroStations ?? [];
     const sourceIndex = stations.findIndex(
       (station) =>
         (station.x - vehicle.x) ** 2 + (station.y - vehicle.y) ** 2 <=
@@ -1500,8 +1595,7 @@ function simulateClientVehicle(deltaSeconds: number) {
 }
 
 function canOccupy(x: number, y: number) {
-  const mapWidth = mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH;
-  const mapHeight = mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT;
+  const { width: mapWidth, height: mapHeight } = getCurrentMapDimensions();
 
   if (
     x < PLAYER_RADIUS ||
@@ -1591,6 +1685,7 @@ function drawArena() {
 
   if (
     activeMode === "selectingMap" ||
+    activeMode === "previewingDesign" ||
     activeMode === "waiting" ||
     activeMode === "playing" ||
     activeMode === "ended"
@@ -1815,8 +1910,10 @@ function drawVehicle(fit: MapFit) {
   const screenX = fit.x + vehicle.x * fit.scale;
   const screenY = fit.y + vehicle.y * fit.scale;
   const radius = Math.max(6 * getDeviceScale(), PLAYER_RADIUS * fit.scale);
-  const color = activeMode === "selectingMap"
-    ? activeMap?.previewPlayerColor ?? PLAYER_COLORS[0]
+  const color = isSandboxMode()
+    ? activeMode === "previewingDesign"
+      ? designerState?.spawns[0]?.color ?? PLAYER_COLORS[0]
+      : activeMap?.previewPlayerColor ?? PLAYER_COLORS[0]
     : activeRoom?.players.find((player) => player.slot === vehicleSlot)?.color ??
       PLAYER_COLORS[(vehicleSlot ?? 1) - 1] ?? PLAYER_COLORS[0];
 
@@ -1838,10 +1935,10 @@ function drawVehicle(fit: MapFit) {
 }
 
 function getMapFit(): MapFit {
-  const mapWidth = activeMode === "designingMap" && designerState
+  const mapWidth = (activeMode === "designingMap" || activeMode === "previewingDesign") && designerState
     ? designerState.width
     : mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH;
-  const mapHeight = activeMode === "designingMap" && designerState
+  const mapHeight = (activeMode === "designingMap" || activeMode === "previewingDesign") && designerState
     ? designerState.height
     : mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT;
   const scale = Math.min(canvas.width / mapWidth, canvas.height / mapHeight);
@@ -1854,6 +1951,20 @@ function getMapFit(): MapFit {
     width,
     height,
     scale,
+  };
+}
+
+function isSandboxMode() {
+  return activeMode === "selectingMap" || activeMode === "previewingDesign";
+}
+
+function getCurrentMapDimensions() {
+  if (activeMode === "previewingDesign" && designerState) {
+    return { width: designerState.width, height: designerState.height };
+  }
+  return {
+    width: mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH,
+    height: mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT,
   };
 }
 
@@ -1885,10 +1996,13 @@ function updateHud() {
   const designerName = document.querySelector<HTMLInputElement>("#designer-name");
   const designerBrush = document.querySelector<HTMLInputElement>("#designer-brush");
   const designerColor = document.querySelector<HTMLInputElement>("#designer-color");
+  const designerPreview = document.querySelector<HTMLButtonElement>("#designer-preview");
   const designerSave = document.querySelector<HTMLButtonElement>("#designer-save");
   const designerMessage = document.querySelector<HTMLElement>("#designer-message");
 
-  hud?.classList.toggle("designer-active", activeMode === "designingMap");
+  const designerVisible = activeMode === "designingMap" || activeMode === "previewingDesign";
+  hud?.classList.toggle("designer-active", designerVisible);
+  hud?.classList.toggle("preview-active", activeMode === "previewingDesign");
 
   if (modeLine) {
     setTextIfChanged(modeLine, getModeText());
@@ -1910,9 +2024,9 @@ function updateHud() {
     designerButton.hidden = activeMode !== "selectingMap";
   }
   if (designerControls) {
-    designerControls.hidden = activeMode !== "designingMap";
+    designerControls.hidden = !designerVisible;
   }
-  if (designerState && activeMode === "designingMap") {
+  if (designerState && designerVisible) {
     if (designerName && document.activeElement !== designerName) {
       designerName.value = designerState.name;
     }
@@ -1925,6 +2039,9 @@ function updateHud() {
     if (designerSave) {
       designerSave.disabled = designerState.saving;
       designerSave.textContent = designerState.saving ? "Saving…" : "Save";
+    }
+    if (designerPreview) {
+      designerPreview.textContent = activeMode === "previewingDesign" ? "Back to edit" : "Preview";
     }
     if (designerMessage) {
       setTextIfChanged(designerMessage, designerState.message);
@@ -1946,6 +2063,9 @@ function updateHud() {
 }
 
 function getModeText() {
+  if (activeMode === "previewingDesign") {
+    return "Preview";
+  }
   if (activeMode === "designingMap") {
     return "Designer";
   }
@@ -1995,6 +2115,9 @@ function getModeText() {
 }
 
 function getMapText() {
+  if (activeMode === "previewingDesign") {
+    return "Unsaved map preview";
+  }
   if (activeMode === "designingMap") {
     return "Paint walls · place spawns/metros · right-click removes markers";
   }
@@ -2003,7 +2126,7 @@ function getMapText() {
   }
 
   if (activeMode === "selectingMap") {
-    return `<strong>${escapeHtml(activeMap.name)} · ${activeMap.numberOfPlayers} players · Tab map · WASD drive · Space fire · G grenade · Enter create</strong>`;
+    return `<strong>${escapeHtml(activeMap.name)} · ${activeMap.numberOfPlayers} players · Tab map · Arrow keys · Space fire · Enter create</strong>`;
   }
 
   if (activeRoom) {
@@ -2104,11 +2227,11 @@ function installDebugSurface() {
       roomId: activeRoom?.id ?? null,
       vehicle: { ...vehicle },
       renderPlayers: renderPlayers.map((player) => ({ ...player })),
-      renderBullets: (activeMode === "selectingMap"
+      renderBullets: (isSandboxMode()
         ? sandboxProjectiles
         : renderBullets
       ).map((bullet) => ({ ...bullet })),
-      wallCraters: (activeMode === "selectingMap"
+      wallCraters: (isSandboxMode()
         ? sandboxCraters
         : activeRoom?.wallCraters ?? []
       ).map((crater) => ({ ...crater })),
@@ -2137,7 +2260,7 @@ function sendCurrentInput() {
     turnLeft: activeKeys.has("ArrowLeft"),
     turnRight: activeKeys.has("ArrowRight"),
     fire: activeKeys.has("Space"),
-    grenade: activeKeys.has("ArrowDown") || activeKeys.has("Grenade"),
+    grenade: activeKeys.has("ArrowDown"),
   };
   const controlsSignature = JSON.stringify({
     accelerate: inputPayload.accelerate,
@@ -2205,26 +2328,7 @@ function normalizeInputKey(key: string) {
     return "Space";
   }
 
-  if (key.toLowerCase() === "g") {
-    return "Grenade";
-  }
-
-  return normalizePreviewInputKey(key);
-}
-
-function normalizePreviewInputKey(key: string) {
-  switch (key.toLowerCase()) {
-    case "w":
-      return "ArrowUp";
-    case "s":
-      return "ArrowDown";
-    case "a":
-      return "ArrowLeft";
-    case "d":
-      return "ArrowRight";
-    default:
-      return null;
-  }
+  return null;
 }
 
 function loadImage(imageUrl: string) {

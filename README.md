@@ -8,12 +8,11 @@ Controls:
 - Arrow Down: brake and throw a grenade (2-second cooldown)
 - Arrow Left/Right: steer
 - Space: fire
-- G: throw a grenade
 - Escape: return to map selection
 
-The map-selection screen is a local sandbox. Use Tab/Shift+Tab to change maps, WASD to drive, Space to fire, and G to throw grenades before creating the game with Enter. Wall damage and blast effects work in the sandbox without starting a room.
+The map-selection screen is a local sandbox. Use Tab/Shift+Tab to change maps, the arrow keys to drive, and Space to fire before creating the game with Enter. Wall damage and blast effects work in the sandbox without starting a room.
 
-The thin toolbar above the arena includes **Design map**. The designer provides wall and erase brushes, spawn and metro placement, adjustable brush size, and selectable/random player colors. Right-click a spawn or metro marker to remove it. A playable map needs at least two spawns; metro stations must be omitted or placed in groups of two or more. Saving returns directly to the new map in the selection sandbox, where it can be tested and used to create a multiplayer room.
+The thin toolbar above the arena includes **Design map**. The designer provides wall and erase brushes, spawn and metro placement, adjustable brush size, and selectable/random player colors. Right-click a spawn or metro marker to remove it. Use **Preview** to drive, fire, use metros, and test destructible collision before saving. A playable map needs at least two spawns; metro stations must be omitted or placed in groups of two or more. Saving returns directly to the new map in the selection sandbox, where it can be tested and used to create a multiplayer room.
 
 Walls create a strong friction/dissipation field as players approach them. Regular bullets keep flying until they hit a player or wall, or leave the arena. Wall impacts erase pixels from both the visible map and its collision raster, so repeated shots can open a passage. Grenades travel through walls, then damage nearby players and carve a larger opening when they detonate.
 
