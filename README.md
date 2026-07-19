@@ -42,10 +42,20 @@ Run all validations:
 bash scripts/check.sh
 ```
 
-Test the production containers:
+## Northflank deployment
+
+The Northflank image includes the web client, API, and WebSocket server. Configure Northflank with:
+
+- Dockerfile: `/Dockerfile.northflank`
+- Build context: `/`
+- Public HTTP port: `8080`
+- Health check: `/api/monitor`
+
+Build and test the production image locally:
 
 ```bash
-docker compose up --build
+docker build --file Dockerfile.northflank --tag paint-arena .
+docker run --rm --publish 8080:8080 paint-arena
 ```
 
 ### Docker Socket Security

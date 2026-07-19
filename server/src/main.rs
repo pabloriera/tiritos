@@ -20,6 +20,7 @@ use tokio::{
     sync::watch,
     time::{Duration, interval},
 };
+use tower_http::services::{ServeDir, ServeFile};
 
 const TICK_RATE_HZ: u64 = 30;
 const TICK_SECONDS: f32 = 1.0 / TICK_RATE_HZ as f32;
@@ -430,6 +431,9 @@ async fn main() {
 fn app() -> Router {
     let state = AppState::new();
     spawn_room_tick_loop(state.clone());
+    let web_dist_dir = env::var("WEB_DIST_DIR").unwrap_or_else(|_| "web/dist".to_owned());
+    let web_index = format!("{web_dist_dir}/index.html");
+    let web_service = ServeDir::new(web_dist_dir).fallback(ServeFile::new(web_index));
 
     Router::new()
         .route("/api/maps", get(list_maps))
@@ -457,6 +461,7 @@ fn app() -> Router {
         .route("/ws/rooms/{room_id}", get(room_ws_handler))
         .route("/ws", get(ws_handler))
         .with_state(state)
+        .fallback_service(web_service)
 }
 
 fn load_builtin_maps() -> HashMap<String, GameMap> {
