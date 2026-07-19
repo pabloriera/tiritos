@@ -198,7 +198,7 @@ const PLAYER_RADIUS = 10;
 const MAX_SPEED = 165;
 const ACCELERATION = 300;
 const BRAKING = 360;
-const FRICTION = 135;
+const FRICTION = 114.75;
 const TURN_SPEED = 3.4;
 const BULLET_SPEED = 440;
 const FIRE_COOLDOWN_SECONDS = 0.14;
@@ -210,6 +210,7 @@ const METRO_COOLDOWN_SECONDS = 1.5;
 const GRENADE_CRATER_RADIUS = 46;
 const GRENADE_BLAST_RADIUS = 72;
 const WALL_FIELD_RADIUS = 38;
+const MIN_BLOCKING_WALL_COMPONENT_PIXELS = 12;
 const BLAST_EFFECT_DURATION_MS = 500;
 const INPUT_SEND_INTERVAL_MS = 100;
 const ROOM_POLL_INTERVAL_MS = 1000;
@@ -1610,12 +1611,12 @@ function canOccupy(x: number, y: number) {
     return true;
   }
 
-  if (isWallPixel(x, y)) {
+  if (isPlayerBlockingWallPixel(x, y)) {
     return false;
   }
   for (let sample = 0; sample < 24; sample += 1) {
     const angle = sample * Math.PI * 2 / 24;
-    if (isWallPixel(
+    if (isPlayerBlockingWallPixel(
       x + Math.cos(angle) * PLAYER_RADIUS,
       y + Math.sin(angle) * PLAYER_RADIUS,
     )) {
@@ -1629,7 +1630,7 @@ function wallClearance(x: number, y: number, maximum: number) {
   for (let distance = 0; distance <= maximum; distance += 2) {
     for (let ray = 0; ray < 24; ray += 1) {
       const angle = ray * Math.PI * 2 / 24;
-      if (isWallPixel(
+      if (isPlayerBlockingWallPixel(
         x + Math.cos(angle) * distance,
         y + Math.sin(angle) * distance,
       )) {
@@ -1663,6 +1664,65 @@ function isWallPixel(x: number, y: number) {
     collisionPixels.data[index] === 128 &&
     collisionPixels.data[index + 1] === 0 &&
     collisionPixels.data[index + 2] === 0
+  );
+}
+
+function isPlayerBlockingWallPixel(x: number, y: number) {
+  const collisionPixels = dynamicMapPixels ?? mapPixels;
+  if (!collisionPixels) {
+    return false;
+  }
+  const startX = Math.floor(x);
+  const startY = Math.floor(y);
+  if (
+    startX < 0 ||
+    startY < 0 ||
+    startX >= collisionPixels.width ||
+    startY >= collisionPixels.height
+  ) {
+    return true;
+  }
+  const startIndex = startY * collisionPixels.width + startX;
+  if (!isWallPixelIndex(collisionPixels, startIndex)) {
+    return false;
+  }
+
+  const connected = [startIndex];
+  const visited = new Set(connected);
+  for (let cursor = 0; cursor < connected.length; cursor += 1) {
+    const pixel = connected[cursor];
+    if (pixel === undefined) {
+      continue;
+    }
+    const pixelX = pixel % collisionPixels.width;
+    const pixelY = Math.floor(pixel / collisionPixels.width);
+    for (let neighborY = Math.max(0, pixelY - 1);
+      neighborY <= Math.min(collisionPixels.height - 1, pixelY + 1);
+      neighborY += 1) {
+      for (let neighborX = Math.max(0, pixelX - 1);
+        neighborX <= Math.min(collisionPixels.width - 1, pixelX + 1);
+        neighborX += 1) {
+        const neighbor = neighborY * collisionPixels.width + neighborX;
+        if (visited.has(neighbor) || !isWallPixelIndex(collisionPixels, neighbor)) {
+          continue;
+        }
+        visited.add(neighbor);
+        connected.push(neighbor);
+        if (connected.length >= MIN_BLOCKING_WALL_COMPONENT_PIXELS) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isWallPixelIndex(pixels: ImageData, pixel: number) {
+  const index = pixel * 4;
+  return (
+    pixels.data[index] === 128 &&
+    pixels.data[index + 1] === 0 &&
+    pixels.data[index + 2] === 0
   );
 }
 

@@ -34,7 +34,7 @@ const PLAYER_RADIUS: f32 = 10.0;
 const MAX_SPEED: f32 = 165.0;
 const ACCELERATION: f32 = 300.0;
 const BRAKING: f32 = 360.0;
-const FRICTION: f32 = 135.0;
+const FRICTION: f32 = 114.75;
 const TURN_SPEED: f32 = 3.4;
 const FIRE_COOLDOWN_SECONDS: f32 = 0.14;
 const BULLET_RADIUS: f32 = 3.0;
@@ -48,6 +48,7 @@ const BULLET_CRATER_RADIUS: f32 = 5.0;
 const GRENADE_CRATER_RADIUS: f32 = 46.0;
 const BLAST_VISIBLE_TICKS: u64 = TICK_RATE_HZ / 2;
 const WALL_FIELD_RADIUS: f32 = 38.0;
+const MIN_BLOCKING_WALL_COMPONENT_PIXELS: usize = 12;
 const COUNTDOWN_TICKS: u64 = TICK_RATE_HZ * 3;
 const RESPAWN_TICKS: u64 = TICK_RATE_HZ * 2;
 const SPAWN_PROTECTION_TICKS: u64 = TICK_RATE_HZ;
@@ -1301,12 +1302,51 @@ fn is_wall_dynamic(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32) -> bool 
     wall_pixels[pixel_y * usize::from(map.compiled.width) + pixel_x]
 }
 
+fn is_player_blocking_wall(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32) -> bool {
+    if is_outside_arena(map, x, y) {
+        return true;
+    }
+    let start_x = x.floor() as usize;
+    let start_y = y.floor() as usize;
+    let width = usize::from(map.compiled.width);
+    let height = usize::from(map.compiled.height);
+    if !wall_pixels[start_y * width + start_x] {
+        return false;
+    }
+
+    let mut connected = Vec::with_capacity(MIN_BLOCKING_WALL_COMPONENT_PIXELS);
+    connected.push((start_x, start_y));
+    let mut cursor = 0;
+    while cursor < connected.len() {
+        let (pixel_x, pixel_y) = connected[cursor];
+        cursor += 1;
+        let minimum_x = pixel_x.saturating_sub(1);
+        let maximum_x = (pixel_x + 1).min(width - 1);
+        let minimum_y = pixel_y.saturating_sub(1);
+        let maximum_y = (pixel_y + 1).min(height - 1);
+        for neighbor_y in minimum_y..=maximum_y {
+            for neighbor_x in minimum_x..=maximum_x {
+                if !wall_pixels[neighbor_y * width + neighbor_x]
+                    || connected.contains(&(neighbor_x, neighbor_y))
+                {
+                    continue;
+                }
+                connected.push((neighbor_x, neighbor_y));
+                if connected.len() >= MIN_BLOCKING_WALL_COMPONENT_PIXELS {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn can_occupy_dynamic(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32, radius: f32) -> bool {
     const SAMPLES: usize = 24;
-    !is_wall_dynamic(map, wall_pixels, x, y)
+    !is_player_blocking_wall(map, wall_pixels, x, y)
         && (0..SAMPLES).all(|index| {
             let angle = index as f32 * std::f32::consts::TAU / SAMPLES as f32;
-            !is_wall_dynamic(
+            !is_player_blocking_wall(
                 map,
                 wall_pixels,
                 x + angle.cos() * radius,
@@ -1321,7 +1361,7 @@ fn wall_clearance(map: &GameMap, wall_pixels: &[bool], x: f32, y: f32, maximum: 
     while distance <= maximum {
         for ray in 0..RAYS {
             let angle = ray as f32 * std::f32::consts::TAU / RAYS as f32;
-            if is_wall_dynamic(
+            if is_player_blocking_wall(
                 map,
                 wall_pixels,
                 x + angle.cos() * distance,
@@ -1957,6 +1997,38 @@ mod tests {
             PLAYER_RADIUS
         ));
         assert!(player.speed < MAX_SPEED * 0.25);
+    }
+
+    #[test]
+    fn tiny_wall_debris_does_not_block_players() {
+        let map = level_one();
+        let mut wall_pixels = vec![false; map.compiled.wall_pixels().len()];
+        let width = usize::from(map.compiled.width);
+        for y in 99..=101 {
+            for x in 99..=101 {
+                wall_pixels[y * width + x] = true;
+            }
+        }
+
+        assert!(is_wall_dynamic(&map, &wall_pixels, 100.0, 100.0));
+        assert!(can_occupy_dynamic(
+            &map,
+            &wall_pixels,
+            100.0,
+            100.0,
+            PLAYER_RADIUS
+        ));
+
+        for y in 99..=101 {
+            wall_pixels[y * width + 102] = true;
+        }
+        assert!(!can_occupy_dynamic(
+            &map,
+            &wall_pixels,
+            100.0,
+            100.0,
+            PLAYER_RADIUS
+        ));
     }
 
     #[test]
