@@ -1,5 +1,11 @@
 :root {
   --hud-height: 44px;
+  --neon-blue: #3154e8;
+  --neon-cyan: #2ee8f0;
+  --neon-magenta: #f02bc2;
+  --neon-yellow: #f4e43f;
+  --neon-violet: #7a3ee8;
+  --neon-ink: #10134f;
   color: #111111;
   background: #000000;
   font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -62,9 +68,9 @@ body {
   height: var(--hud-height);
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 2px solid #800000;
+  border-bottom: 2px solid var(--neon-magenta);
   padding: 5px 8px;
-  background: #6f7000;
+  background: linear-gradient(90deg, var(--neon-blue), var(--neon-violet));
   color: #ffffff;
   white-space: nowrap;
 }
@@ -99,7 +105,7 @@ body {
 }
 
 .map-arrow {
-  color: #80ffff;
+  color: var(--neon-cyan);
 }
 
 .player-list {
@@ -137,7 +143,7 @@ body {
 
 .connection-line {
   flex: 0 0 auto;
-  color: #e5e5c0;
+  color: var(--neon-cyan);
   font-size: 10px;
 }
 
@@ -171,7 +177,7 @@ body {
 .designer-name,
 .designer-controls input {
   height: 28px;
-  border: 1px solid #3d3d00;
+  border: 1px solid var(--neon-ink);
   border-radius: 2px;
   font: 11px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
@@ -180,16 +186,25 @@ body {
 .tool-button {
   flex: 0 0 auto;
   padding: 0 9px;
-  background: #e5e5c0;
-  color: #222200;
+  background: var(--neon-yellow);
+  color: var(--neon-ink);
   cursor: pointer;
 }
 
 .hud-button:hover,
 .tool-button:hover,
-.tool-button.active,
+.tool-button.active {
+  background: var(--neon-cyan);
+}
+
 .hud-button.primary {
-  background: #80ffff;
+  background: var(--neon-magenta);
+  color: #ffffff;
+}
+
+.hud-button.primary:hover {
+  background: var(--neon-yellow);
+  color: var(--neon-ink);
 }
 
 .hud-button:disabled {
@@ -227,7 +242,7 @@ body {
 .designer-name {
   width: 150px;
   padding: 0 7px;
-  background: #ffffdf;
+  background: #e8fdff;
 }
 
 .tool-group {
@@ -268,9 +283,9 @@ body {
   gap: 7px;
   width: min(420px, calc(100vw - 32px));
   transform: translate(-50%, -50%);
-  border: 2px solid #800000;
+  border: 2px solid var(--neon-magenta);
   padding: 12px;
-  background: rgb(128 128 0 / 94%);
+  background: rgb(49 84 232 / 94%);
   color: #ffffff;
 }
 
