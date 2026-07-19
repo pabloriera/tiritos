@@ -1,0 +1,30 @@
+{
+  "name": "paint-arena-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "e2e:selenium": "node e2e/two-player.selenium.mjs",
+    "e2e:fluidity": "node e2e/fluidity.selenium.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@puppeteer/browsers": "^3.0.6",
+    "@types/node": "^26.1.1",
+    "eslint": "latest",
+    "globals": "latest",
+    "selenium-webdriver": "^4.46.0",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "paletteVersion": 2,
+  "colors": {
+    "floor": "#808000",
+    "wall": "#800000",
+    "metroStation": "#0080FF",
+    "spawnMagenta": "#FF00FF",
+    "spawnCyan": "#80FFFF",
+    "spawnViolet": "#4000FF"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "formatVersion": 2,
+  "id": "clover-junction",
+  "name": "Clover Junction",
+  "width": 1552,
+  "height": 783,
+  "paletteVersion": 2,
+  "numberOfPlayers": 3,
+  "players": [
+    {
+      "slot": 1,
+      "color": "#FF00FF",
+      "spawnLocations": [{ "x": 221, "y": 112 }, { "x": 1335, "y": 657 }]
+    },
+    {
+      "slot": 2,
+      "color": "#80FFFF",
+      "spawnLocations": [{ "x": 1305, "y": 112 }, { "x": 220, "y": 682 }]
+    },
+    {
+      "slot": 3,
+      "color": "#4000FF",
+      "spawnLocations": [{ "x": 1469, "y": 403 }, { "x": 160, "y": 679 }]
+    }
+  ],
+  "metroStations": [
+    { "id": "M1", "color": "#0080FF", "location": { "x": 371, "y": 232 } },
+    { "id": "M2", "color": "#0080FF", "location": { "x": 1202, "y": 306 } },
+    { "id": "M3", "color": "#0080FF", "location": { "x": 778, "y": 660 } }
+  ]
+}

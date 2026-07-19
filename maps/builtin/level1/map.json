@@ -1,0 +1,32 @@
+{
+  "formatVersion": 2,
+  "id": "level1",
+  "name": "Level 1",
+  "width": 1552,
+  "height": 783,
+  "paletteVersion": 2,
+  "numberOfPlayers": 3,
+  "players": [
+    {
+      "slot": 1,
+      "color": "#FF00FF",
+      "spawnLocations": [{ "x": 249, "y": 96 }, { "x": 122, "y": 662 }]
+    },
+    {
+      "slot": 2,
+      "color": "#80FFFF",
+      "spawnLocations": [{ "x": 1222, "y": 117 }, { "x": 1321, "y": 519 }]
+    },
+    {
+      "slot": 3,
+      "color": "#4000FF",
+      "spawnLocations": [{ "x": 340, "y": 527 }, { "x": 1346, "y": 713 }]
+    }
+  ],
+  "metroStations": [
+    { "id": "M1", "color": "#0080FF", "location": { "x": 1048, "y": 215 } },
+    { "id": "M2", "color": "#0080FF", "location": { "x": 230, "y": 367 } },
+    { "id": "M3", "color": "#0080FF", "location": { "x": 1412, "y": 542 } },
+    { "id": "M4", "color": "#0080FF", "location": { "x": 664, "y": 557 } }
+  ]
+}

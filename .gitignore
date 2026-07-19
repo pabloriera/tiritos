@@ -1,0 +1,26 @@
+# Rust
+target/
+server/target/
+
+# Node
+node_modules/
+web/node_modules/
+web/dist/
+web/.browsers/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Editors
+.vscode/*.log
+
+# Operating systems
+.DS_Store
+Thumbs.db

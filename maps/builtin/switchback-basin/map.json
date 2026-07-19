@@ -1,0 +1,31 @@
+{
+  "formatVersion": 2,
+  "id": "switchback-basin",
+  "name": "Switchback Basin",
+  "width": 1552,
+  "height": 783,
+  "paletteVersion": 2,
+  "numberOfPlayers": 3,
+  "players": [
+    {
+      "slot": 1,
+      "color": "#FF00FF",
+      "spawnLocations": [{ "x": 344, "y": 114 }, { "x": 1183, "y": 647 }]
+    },
+    {
+      "slot": 2,
+      "color": "#80FFFF",
+      "spawnLocations": [{ "x": 1306, "y": 121 }, { "x": 193, "y": 658 }]
+    },
+    {
+      "slot": 3,
+      "color": "#4000FF",
+      "spawnLocations": [{ "x": 1336, "y": 466 }, { "x": 227, "y": 490 }]
+    }
+  ],
+  "metroStations": [
+    { "id": "M1", "color": "#0080FF", "location": { "x": 368, "y": 358 } },
+    { "id": "M2", "color": "#0080FF", "location": { "x": 1197, "y": 364 } },
+    { "id": "M3", "color": "#0080FF", "location": { "x": 784, "y": 585 } }
+  ]
+}

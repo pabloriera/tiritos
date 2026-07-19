@@ -1,0 +1,109 @@
+{
+  "name": "Paint Arena Development",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+
+  "remoteUser": "vscode",
+
+  "updateRemoteUserUID": true,
+
+  "forwardPorts": [
+    5173,
+    8080
+  ],
+
+  "portsAttributes": {
+    "5173": {
+      "label": "Paint Arena Web",
+      "onAutoForward": "openBrowser"
+    },
+    "8080": {
+      "label": "Paint Arena Server",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "containerEnv": {
+    "RUST_BACKTRACE": "1",
+    "CARGO_TERM_COLOR": "always",
+    "SERVER_HOST": "0.0.0.0",
+    "SERVER_PORT": "8080"
+  },
+
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt=seccomp=unconfined"
+  ],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-containers",
+        "editorconfig.editorconfig"
+      ],
+
+      "settings": {
+        "editor.formatOnSave": true,
+
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        },
+
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[jsonc]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.cargo.allTargets": true,
+        "rust-analyzer.procMacro.enable": true,
+
+        "files.exclude": {
+          "**/target": true,
+          "**/node_modules": true,
+          "**/dist": true
+        },
+
+        "search.exclude": {
+          "**/target": true,
+          "**/node_modules": true,
+          "**/dist": true
+        }
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "shutdownAction": "stopContainer"
+}
