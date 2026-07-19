@@ -439,6 +439,7 @@ name = "paint-arena-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "png",
  "rand",
  "serde",

@@ -100,6 +100,7 @@ type JoinRoomResponse = {
 
 type ClientMode =
   | "selectingMap"
+  | "designingMap"
   | "creatingRoom"
   | "waiting"
   | "playing"
@@ -111,6 +112,29 @@ type Vehicle = {
   y: number;
   heading: number;
   speed: number;
+};
+
+type DesignerTool = "wall" | "erase" | "spawn" | "metro";
+
+type DesignerSpawn = MapLocation & {
+  color: string;
+};
+
+type DesignerState = {
+  canvas: HTMLCanvasElement;
+  context: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+  name: string;
+  tool: DesignerTool;
+  brushSize: number;
+  color: string;
+  spawns: DesignerSpawn[];
+  metros: MapLocation[];
+  drawing: boolean;
+  lastPoint: MapLocation | null;
+  saving: boolean;
+  message: string;
 };
 
 type MapFit = {
@@ -164,6 +188,11 @@ declare global {
 
 const DEFAULT_MAP_WIDTH = 1552;
 const DEFAULT_MAP_HEIGHT = 783;
+const DESIGNER_MAP_WIDTH = 1200;
+const DESIGNER_MAP_HEIGHT = 675;
+const FLOOR_COLOR = "#808000";
+const WALL_COLOR = "#800000";
+const METRO_COLOR = "#0080ff";
 const PLAYER_RADIUS = 10;
 const MAX_SPEED = 165;
 const ACCELERATION = 300;
@@ -204,7 +233,7 @@ if (!app) {
 }
 
 const root = app;
-const maps = await fetchJson<MapSummary[]>("/api/maps");
+let maps = await fetchJson<MapSummary[]>("/api/maps");
 const currentRoomId = roomIdFromPath(window.location.pathname);
 
 let selectedMapIndex = 0;
@@ -244,6 +273,7 @@ let sandboxNextBlastId = -1;
 let sandboxFireCooldown = 0;
 let sandboxGrenadeCooldown = 0;
 let localMetroCooldown = METRO_COOLDOWN_SECONDS;
+let designerState: DesignerState | null = null;
 
 renderGameShell();
 
@@ -263,6 +293,7 @@ if (!renderingContext) {
 const canvasContext = renderingContext;
 
 installKeyboardControls();
+installDesignerControls();
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 connectStatusSocket();
@@ -286,6 +317,22 @@ function renderGameShell() {
         <ol id="player-list" class="player-list"></ol>
         <ol id="event-feed" class="event-feed"></ol>
         <p id="ws-status" class="connection-line"></p>
+        <button id="designer-button" class="hud-button" type="button">Design map</button>
+        <div id="designer-controls" class="designer-controls" hidden>
+          <input id="designer-name" class="designer-name" maxlength="40" value="Untitled Arena" aria-label="Map name">
+          <div class="tool-group" role="group" aria-label="Drawing tool">
+            <button type="button" class="tool-button" data-tool="wall">Wall</button>
+            <button type="button" class="tool-button" data-tool="erase">Erase</button>
+            <button type="button" class="tool-button" data-tool="spawn">Spawn</button>
+            <button type="button" class="tool-button" data-tool="metro">Metro</button>
+          </div>
+          <label class="brush-control">Size <input id="designer-brush" type="range" min="4" max="80" value="24"></label>
+          <input id="designer-color" type="color" aria-label="Spawn color">
+          <button id="designer-random-color" class="hud-button" type="button" title="Random spawn color">Random</button>
+          <button id="designer-save" class="hud-button primary" type="button">Save</button>
+          <button id="designer-cancel" class="hud-button" type="button">Cancel</button>
+          <span id="designer-message" class="designer-message"></span>
+        </div>
       </section>
       <section id="invite-modal" class="invite-modal" hidden>
         <span>Invite</span>
@@ -324,6 +371,10 @@ function installKeyboardControls() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (activeMode === "designingMap") {
+        exitDesignerMode();
+        return;
+      }
       resetToMapSelection();
       return;
     }
@@ -370,6 +421,305 @@ function installKeyboardControls() {
       activeKeys.delete(inputKey);
     }
   });
+}
+
+function installDesignerControls() {
+  const designerButton = document.querySelector<HTMLButtonElement>("#designer-button");
+  const controls = document.querySelector<HTMLElement>("#designer-controls");
+  const nameInput = document.querySelector<HTMLInputElement>("#designer-name");
+  const brushInput = document.querySelector<HTMLInputElement>("#designer-brush");
+  const colorInput = document.querySelector<HTMLInputElement>("#designer-color");
+  const randomButton = document.querySelector<HTMLButtonElement>("#designer-random-color");
+  const saveButton = document.querySelector<HTMLButtonElement>("#designer-save");
+  const cancelButton = document.querySelector<HTMLButtonElement>("#designer-cancel");
+
+  designerButton?.addEventListener("click", enterDesignerMode);
+  cancelButton?.addEventListener("click", exitDesignerMode);
+  saveButton?.addEventListener("click", () => void saveDesignedMap());
+  randomButton?.addEventListener("click", () => {
+    if (!designerState || !colorInput) {
+      return;
+    }
+    designerState.color = randomPlayerColor();
+    colorInput.value = designerState.color;
+  });
+  nameInput?.addEventListener("input", () => {
+    if (designerState) {
+      designerState.name = nameInput.value;
+    }
+  });
+  brushInput?.addEventListener("input", () => {
+    if (designerState) {
+      designerState.brushSize = Number(brushInput.value);
+    }
+  });
+  colorInput?.addEventListener("input", () => {
+    if (designerState) {
+      designerState.color = colorInput.value;
+    }
+  });
+  controls?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tool]");
+    const tool = button?.dataset.tool as DesignerTool | undefined;
+    if (designerState && tool) {
+      designerState.tool = tool;
+      updateHud();
+    }
+  });
+
+  canvas.addEventListener("contextmenu", (event) => {
+    if (activeMode === "designingMap") {
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("pointerdown", handleDesignerPointerDown);
+  canvas.addEventListener("pointermove", handleDesignerPointerMove);
+  window.addEventListener("pointerup", () => {
+    if (designerState) {
+      designerState.drawing = false;
+      designerState.lastPoint = null;
+    }
+  });
+}
+
+function enterDesignerMode() {
+  if (activeMode !== "selectingMap") {
+    return;
+  }
+  const designCanvas = document.createElement("canvas");
+  designCanvas.width = DESIGNER_MAP_WIDTH;
+  designCanvas.height = DESIGNER_MAP_HEIGHT;
+  const context = designCanvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = FLOOR_COLOR;
+  context.fillRect(0, 0, designCanvas.width, designCanvas.height);
+  const firstColor = randomPlayerColor();
+  designerState = {
+    canvas: designCanvas,
+    context,
+    width: designCanvas.width,
+    height: designCanvas.height,
+    name: "Untitled Arena",
+    tool: "wall",
+    brushSize: 24,
+    color: firstColor,
+    spawns: [
+      { x: 100, y: designCanvas.height / 2, color: firstColor },
+      {
+        x: designCanvas.width - 100,
+        y: designCanvas.height / 2,
+        color: randomPlayerColor(),
+      },
+    ],
+    metros: [],
+    drawing: false,
+    lastPoint: null,
+    saving: false,
+    message: "Draw walls; right-click a spawn or metro to remove it.",
+  };
+  resetSandbox();
+  activeMode = "designingMap";
+  resizeCanvas();
+  updateHud();
+}
+
+function exitDesignerMode() {
+  if (activeMode !== "designingMap") {
+    return;
+  }
+  designerState = null;
+  activeMode = "selectingMap";
+  resizeCanvas();
+  void setActiveMap(maps[selectedMapIndex] ?? null);
+  updateHud();
+}
+
+function handleDesignerPointerDown(event: PointerEvent) {
+  if (activeMode !== "designingMap" || !designerState || designerState.saving) {
+    return;
+  }
+  const point = designerPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  event.preventDefault();
+  if (event.button === 2) {
+    removeDesignerMarker(point);
+    return;
+  }
+  if (designerState.tool === "wall" || designerState.tool === "erase") {
+    designerState.drawing = true;
+    designerState.lastPoint = point;
+    paintDesignerStroke(point, point);
+    if (event.isTrusted) {
+      canvas.setPointerCapture(event.pointerId);
+    }
+    return;
+  }
+  if (designerState.tool === "spawn") {
+    const existing = nearestPointIndex(designerState.spawns, point, 20);
+    if (existing >= 0) {
+      const spawn = designerState.spawns[existing];
+      if (spawn) {
+        spawn.color = designerState.color;
+      }
+    } else if (designerState.spawns.length < 8) {
+      designerState.spawns.push({ ...point, color: designerState.color });
+    } else {
+      designerState.message = "A map can have at most 8 spawns.";
+    }
+  } else if (designerState.metros.length < 16) {
+    designerState.metros.push(point);
+  } else {
+    designerState.message = "A map can have at most 16 metro stations.";
+  }
+  updateHud();
+}
+
+function handleDesignerPointerMove(event: PointerEvent) {
+  if (!designerState?.drawing || activeMode !== "designingMap") {
+    return;
+  }
+  const point = designerPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  paintDesignerStroke(designerState.lastPoint ?? point, point);
+  designerState.lastPoint = point;
+}
+
+function designerPointFromEvent(event: PointerEvent): MapLocation | null {
+  if (!designerState) {
+    return null;
+  }
+  const bounds = canvas.getBoundingClientRect();
+  const fit = getMapFit();
+  const canvasX = (event.clientX - bounds.left) * canvas.width / bounds.width;
+  const canvasY = (event.clientY - bounds.top) * canvas.height / bounds.height;
+  const x = (canvasX - fit.x) / fit.scale;
+  const y = (canvasY - fit.y) / fit.scale;
+  if (x < 0 || y < 0 || x >= designerState.width || y >= designerState.height) {
+    return null;
+  }
+  return { x, y };
+}
+
+function paintDesignerStroke(from: MapLocation, to: MapLocation) {
+  if (!designerState) {
+    return;
+  }
+  const context = designerState.context;
+  context.strokeStyle = designerState.tool === "wall" ? WALL_COLOR : FLOOR_COLOR;
+  context.lineWidth = designerState.brushSize;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(from.x, from.y);
+  context.lineTo(to.x + 0.01, to.y + 0.01);
+  context.stroke();
+}
+
+function removeDesignerMarker(point: MapLocation) {
+  if (!designerState) {
+    return;
+  }
+  const spawnIndex = nearestPointIndex(designerState.spawns, point, 24);
+  if (spawnIndex >= 0) {
+    designerState.spawns.splice(spawnIndex, 1);
+  } else {
+    const metroIndex = nearestPointIndex(designerState.metros, point, 28);
+    if (metroIndex >= 0) {
+      designerState.metros.splice(metroIndex, 1);
+    }
+  }
+  updateHud();
+}
+
+function nearestPointIndex(points: MapLocation[], target: MapLocation, radius: number) {
+  return points.findIndex(
+    (point) => (point.x - target.x) ** 2 + (point.y - target.y) ** 2 <= radius ** 2,
+  );
+}
+
+async function saveDesignedMap() {
+  if (!designerState || designerState.saving) {
+    return;
+  }
+  if (designerState.spawns.length < 2) {
+    designerState.message = "Add at least two spawn points before saving.";
+    updateHud();
+    return;
+  }
+  if (designerState.metros.length === 1) {
+    designerState.message = "Metro stations need a destination; add another or remove it.";
+    updateHud();
+    return;
+  }
+
+  designerState.saving = true;
+  designerState.message = "Saving…";
+  updateHud();
+  const state = designerState;
+  try {
+    const pixels = state.context.getImageData(0, 0, state.width, state.height);
+    const wallMask = new Uint8Array(state.width * state.height);
+    for (let pixel = 0; pixel < wallMask.length; pixel += 1) {
+      wallMask[pixel] = pixels.data[pixel * 4 + 1] < 64 ? 1 : 0;
+    }
+    const saved = await fetchJson<MapSummary>("/api/maps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: state.name,
+        width: state.width,
+        height: state.height,
+        wallMask: bytesToBase64(wallMask),
+        players: state.spawns.map((spawn) => ({
+          color: spawn.color,
+          location: { x: Math.round(spawn.x), y: Math.round(spawn.y) },
+        })),
+        metroStations: state.metros.map((metro) => ({
+          x: Math.round(metro.x),
+          y: Math.round(metro.y),
+        })),
+      }),
+    });
+    maps = await fetchJson<MapSummary[]>("/api/maps");
+    selectedMapIndex = Math.max(0, maps.findIndex((map) => map.id === saved.id));
+    designerState = null;
+    activeMode = "selectingMap";
+    resizeCanvas();
+    await setActiveMap(maps[selectedMapIndex] ?? saved);
+    updateHud();
+  } catch (error) {
+    console.error(error);
+    state.saving = false;
+    state.message = "Could not save. Keep spawns and metros clear of walls.";
+    updateHud();
+  }
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function randomPlayerColor() {
+  const channel = () => Math.floor(80 + Math.random() * 176)
+    .toString(16)
+    .padStart(2, "0");
+  let color = `#${channel()}${channel()}${channel()}`;
+  if (color.toLowerCase() === WALL_COLOR) {
+    color = "#ff00ff";
+  }
+  return color;
 }
 
 function selectRelativeMap(offset: number) {
@@ -1229,6 +1579,11 @@ function drawArena() {
 
   const fit = getMapFit();
 
+  if (activeMode === "designingMap" && designerState) {
+    drawDesignerArena(fit, designerState);
+    return;
+  }
+
   const drawableMap = dynamicMapCanvas ?? mapImage;
   if (drawableMap) {
     canvasContext.drawImage(drawableMap, fit.x, fit.y, fit.width, fit.height);
@@ -1249,6 +1604,39 @@ function drawArena() {
       drawBlastEffects(fit);
       drawVehicle(fit);
     }
+  }
+}
+
+function drawDesignerArena(fit: MapFit, state: DesignerState) {
+  canvasContext.drawImage(state.canvas, fit.x, fit.y, fit.width, fit.height);
+  for (const [index, metro] of state.metros.entries()) {
+    const x = fit.x + metro.x * fit.scale;
+    const y = fit.y + metro.y * fit.scale;
+    const size = Math.max(10 * getDeviceScale(), 24 * fit.scale);
+    canvasContext.fillStyle = METRO_COLOR;
+    canvasContext.fillRect(x - size / 2, y - size / 2, size, size);
+    canvasContext.fillStyle = "#ffffff";
+    canvasContext.font = `${Math.max(9 * getDeviceScale(), 12 * fit.scale)}px monospace`;
+    canvasContext.textAlign = "center";
+    canvasContext.textBaseline = "middle";
+    canvasContext.fillText(`M${index + 1}`, x, y);
+  }
+  for (const [index, spawn] of state.spawns.entries()) {
+    const x = fit.x + spawn.x * fit.scale;
+    const y = fit.y + spawn.y * fit.scale;
+    const radius = Math.max(7 * getDeviceScale(), 10 * fit.scale);
+    canvasContext.fillStyle = spawn.color;
+    canvasContext.strokeStyle = "#ffffff";
+    canvasContext.lineWidth = Math.max(1.5 * getDeviceScale(), fit.scale);
+    canvasContext.beginPath();
+    canvasContext.arc(x, y, radius, 0, Math.PI * 2);
+    canvasContext.fill();
+    canvasContext.stroke();
+    canvasContext.fillStyle = "#111111";
+    canvasContext.font = `${Math.max(8 * getDeviceScale(), 10 * fit.scale)}px monospace`;
+    canvasContext.textAlign = "center";
+    canvasContext.textBaseline = "middle";
+    canvasContext.fillText(String(index + 1), x, y);
   }
 }
 
@@ -1450,8 +1838,12 @@ function drawVehicle(fit: MapFit) {
 }
 
 function getMapFit(): MapFit {
-  const mapWidth = mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH;
-  const mapHeight = mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT;
+  const mapWidth = activeMode === "designingMap" && designerState
+    ? designerState.width
+    : mapImage?.naturalWidth ?? DEFAULT_MAP_WIDTH;
+  const mapHeight = activeMode === "designingMap" && designerState
+    ? designerState.height
+    : mapImage?.naturalHeight ?? DEFAULT_MAP_HEIGHT;
   const scale = Math.min(canvas.width / mapWidth, canvas.height / mapHeight);
   const width = mapWidth * scale;
   const height = mapHeight * scale;
@@ -1467,8 +1859,8 @@ function getMapFit(): MapFit {
 
 function resizeCanvas() {
   const deviceScale = getDeviceScale();
-  const width = Math.max(1, Math.floor(window.innerWidth * deviceScale));
-  const height = Math.max(1, Math.floor(window.innerHeight * deviceScale));
+  const width = Math.max(1, Math.floor(canvas.clientWidth * deviceScale));
+  const height = Math.max(1, Math.floor(canvas.clientHeight * deviceScale));
 
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
@@ -1481,12 +1873,22 @@ function getDeviceScale() {
 }
 
 function updateHud() {
+  const hud = document.querySelector<HTMLElement>("#hud");
   const modeLine = document.querySelector<HTMLParagraphElement>("#mode-line");
   const mapLine = document.querySelector<HTMLParagraphElement>("#map-line");
   const playerList = document.querySelector<HTMLOListElement>("#player-list");
   const eventFeed = document.querySelector<HTMLOListElement>("#event-feed");
   const inviteModal = document.querySelector<HTMLElement>("#invite-modal");
   const inviteLink = document.querySelector<HTMLAnchorElement>("#invite-link");
+  const designerButton = document.querySelector<HTMLButtonElement>("#designer-button");
+  const designerControls = document.querySelector<HTMLElement>("#designer-controls");
+  const designerName = document.querySelector<HTMLInputElement>("#designer-name");
+  const designerBrush = document.querySelector<HTMLInputElement>("#designer-brush");
+  const designerColor = document.querySelector<HTMLInputElement>("#designer-color");
+  const designerSave = document.querySelector<HTMLButtonElement>("#designer-save");
+  const designerMessage = document.querySelector<HTMLElement>("#designer-message");
+
+  hud?.classList.toggle("designer-active", activeMode === "designingMap");
 
   if (modeLine) {
     setTextIfChanged(modeLine, getModeText());
@@ -1504,6 +1906,34 @@ function updateHud() {
     setInnerHtmlIfChanged(eventFeed, getEventFeedHtml());
   }
 
+  if (designerButton) {
+    designerButton.hidden = activeMode !== "selectingMap";
+  }
+  if (designerControls) {
+    designerControls.hidden = activeMode !== "designingMap";
+  }
+  if (designerState && activeMode === "designingMap") {
+    if (designerName && document.activeElement !== designerName) {
+      designerName.value = designerState.name;
+    }
+    if (designerBrush) {
+      designerBrush.value = String(designerState.brushSize);
+    }
+    if (designerColor) {
+      designerColor.value = designerState.color;
+    }
+    if (designerSave) {
+      designerSave.disabled = designerState.saving;
+      designerSave.textContent = designerState.saving ? "Saving…" : "Save";
+    }
+    if (designerMessage) {
+      setTextIfChanged(designerMessage, designerState.message);
+    }
+    for (const toolButton of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
+      toolButton.classList.toggle("active", toolButton.dataset.tool === designerState.tool);
+    }
+  }
+
   if (inviteModal && inviteLink) {
     const shouldShowInvite = inviteVisible && inviteUrl !== null;
     inviteModal.hidden = !shouldShowInvite;
@@ -1516,6 +1946,9 @@ function updateHud() {
 }
 
 function getModeText() {
+  if (activeMode === "designingMap") {
+    return "Designer";
+  }
   if (activeMode === "creatingRoom") {
     return "Creating";
   }
@@ -1562,6 +1995,9 @@ function getModeText() {
 }
 
 function getMapText() {
+  if (activeMode === "designingMap") {
+    return "Paint walls · place spawns/metros · right-click removes markers";
+  }
   if (!activeMap) {
     return "No maps";
   }

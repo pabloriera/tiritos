@@ -1,4 +1,5 @@
 :root {
+  --hud-height: 44px;
   color: #111111;
   background: #000000;
   font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -37,10 +38,13 @@ body {
 }
 
 #map-canvas {
+  position: absolute;
+  top: var(--hud-height);
+  left: 0;
   display: block;
   width: 100vw;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--hud-height));
+  height: calc(100dvh - var(--hud-height));
   background: #000000;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
@@ -48,15 +52,21 @@ body {
 
 .hud {
   position: fixed;
-  top: 10px;
-  left: 10px;
+  top: 0;
+  left: 0;
   z-index: 2;
-  width: min(320px, calc(100vw - 20px));
-  border: 2px solid #800000;
-  padding: 9px 10px;
-  background: rgb(128 128 0 / 88%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100vw;
+  height: var(--hud-height);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 2px solid #800000;
+  padding: 5px 8px;
+  background: #6f7000;
   color: #ffffff;
-  pointer-events: none;
+  white-space: nowrap;
 }
 
 .mode-line,
@@ -66,17 +76,19 @@ body {
 }
 
 .mode-line {
-  font-size: 15px;
+  flex: 0 0 auto;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .map-line {
+  flex: 1 1 auto;
+  min-width: 100px;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 4px;
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .map-line strong {
@@ -91,9 +103,10 @@ body {
 }
 
 .player-list {
-  display: grid;
-  gap: 4px;
-  margin: 8px 0 0;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 12px;
@@ -104,8 +117,7 @@ body {
 }
 
 .player-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
   gap: 7px;
 }
@@ -124,17 +136,18 @@ body {
 }
 
 .connection-line {
-  margin-top: 7px;
+  flex: 0 0 auto;
   color: #e5e5c0;
   font-size: 10px;
 }
 
 .event-feed {
-  display: grid;
-  gap: 2px;
-  margin: 8px 0 0;
-  padding: 7px 0 0;
-  border-top: 1px solid rgb(128 0 0 / 70%);
+  display: flex;
+  flex: 0 1 180px;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
   list-style: none;
   color: #ffffff;
   font-size: 11px;
@@ -144,9 +157,103 @@ body {
   display: none;
 }
 
+.event-feed li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-feed li:not(:first-child) {
+  display: none;
+}
+
+.hud-button,
+.tool-button,
+.designer-name,
+.designer-controls input {
+  height: 28px;
+  border: 1px solid #3d3d00;
+  border-radius: 2px;
+  font: 11px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.hud-button,
+.tool-button {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  background: #e5e5c0;
+  color: #222200;
+  cursor: pointer;
+}
+
+.hud-button:hover,
+.tool-button:hover,
+.tool-button.active,
+.hud-button.primary {
+  background: #80ffff;
+}
+
+.hud-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.designer-controls {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.designer-controls[hidden],
+.hud-button[hidden] {
+  display: none;
+}
+
+.designer-active .map-line,
+.designer-active .player-list,
+.designer-active .event-feed,
+.designer-active .connection-line {
+  display: none;
+}
+
+.designer-name {
+  width: 150px;
+  padding: 0 7px;
+  background: #ffffdf;
+}
+
+.tool-group {
+  display: flex;
+  gap: 2px;
+}
+
+.brush-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+
+#designer-brush {
+  width: 90px;
+}
+
+#designer-color {
+  width: 32px;
+  padding: 2px;
+}
+
+.designer-message {
+  max-width: 300px;
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
 .invite-modal {
   position: fixed;
-  top: 50%;
+  top: calc(50% + var(--hud-height) / 2);
   left: 50%;
   z-index: 3;
   display: grid;
@@ -175,19 +282,12 @@ body {
 }
 
 @media (max-width: 520px) {
-  .hud {
-    top: 8px;
-    left: 8px;
-    width: min(280px, calc(100vw - 16px));
-    padding: 8px;
-  }
-
   .mode-line {
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .map-line,
   .invite-modal a {
-    font-size: 12px;
+    font-size: 10px;
   }
 }

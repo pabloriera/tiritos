@@ -28,7 +28,11 @@ const server = spawnManaged(
   "cargo",
   ["run", "--manifest-path", join(rootDir, "server", "Cargo.toml")],
   rootDir,
-  { SERVER_HOST: "127.0.0.1", SERVER_PORT: serverPort },
+  {
+    SERVER_HOST: "127.0.0.1",
+    SERVER_PORT: serverPort,
+    CUSTOM_MAP_DIR: join(tempDir, "maps"),
+  },
 );
 const web = spawnManaged(
   "npm",
@@ -107,16 +111,48 @@ try {
     "Sandbox grenade did not produce a blast",
   );
 
-  const firstMapName = await playerOne.findElement(By.css("#map-line")).getText();
+  await playerOne.findElement(By.css("#designer-button")).click();
+  await waitForDebugState(playerOne, (state) => state.mode === "designingMap");
+  await playerOne.executeScript(`
+    const input = document.querySelector('#designer-name');
+    input.value = 'Selenium Brushworks';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  `);
+  await playerOne.findElement(By.css('[data-tool="wall"]')).click();
+  await drawDesignerGesture(playerOne, [[0.43, 0.5], [0.57, 0.5]]);
+  await playerOne.findElement(By.css('[data-tool="spawn"]')).click();
+  await drawDesignerGesture(playerOne, [[0.5, 0.2]]);
+  await playerOne.findElement(By.css('[data-tool="metro"]')).click();
+  await drawDesignerGesture(playerOne, [[0.3, 0.3]]);
+  await drawDesignerGesture(playerOne, [[0.7, 0.7]]);
+  await playerOne.findElement(By.css("#designer-save")).click();
+  await playerOne.sleep(2_000);
+  const designerResult = await playerOne.executeScript(`return {
+    mode: window.__paintArenaDebug?.getState().mode,
+    message: document.querySelector('#designer-message')?.textContent,
+    mapText: document.querySelector('#map-line')?.textContent,
+  }`);
+  if (designerResult.mode !== "selectingMap") {
+    throw new Error(`Designer save failed: ${JSON.stringify(designerResult)}`);
+  }
+  await waitForDebugState(playerOne, (state) => state.mode === "selectingMap");
+  if (!designerResult.mapText?.includes("Selenium Brushworks")) {
+    throw new Error(`Unexpected saved map: ${JSON.stringify(designerResult)}`);
+  }
+  await waitForText(playerOne, "#map-line", "Selenium Brushworks");
+
+  const designedMapText = await playerOne.findElement(By.css("#map-line")).getText();
   await pressKey(playerOne, Key.TAB);
   await playerOne.wait(
     async () => {
       const nextMapName = await playerOne.findElement(By.css("#map-line")).getText();
-      return nextMapName !== firstMapName;
+      return nextMapName !== designedMapText;
     },
     10_000,
     "Tab did not change the sandbox map",
   );
+  await playerOne.actions().keyDown(Key.SHIFT).sendKeys(Key.TAB).keyUp(Key.SHIFT).perform();
+  await waitForText(playerOne, "#map-line", "Selenium Brushworks");
   await pressKey(playerOne, Key.ENTER);
   await playerOne.wait(until.urlMatches(/\/game\/[A-Z0-9]+$/), 10_000);
   const inviteUrl = await playerOne.getCurrentUrl();
@@ -221,6 +257,37 @@ try {
   stopProcess(web);
   stopProcess(server);
   rmSync(tempDir, { recursive: true, force: true });
+}
+
+async function waitForDebugState(driver, predicate) {
+  await driver.wait(async () => {
+    const state = await driver.executeScript(
+      "return window.__paintArenaDebug?.getState()",
+    );
+    return predicate(state);
+  }, 10_000);
+}
+
+async function drawDesignerGesture(driver, points) {
+  await driver.executeScript((gesturePoints) => {
+    const canvas = document.querySelector("#map-canvas");
+    const bounds = canvas.getBoundingClientRect();
+    const dispatch = (type, point, buttons) => {
+      canvas.dispatchEvent(new PointerEvent(type, {
+        bubbles: true,
+        button: 0,
+        buttons,
+        pointerId: 17,
+        clientX: bounds.left + bounds.width * point[0],
+        clientY: bounds.top + bounds.height * point[1],
+      }));
+    };
+    dispatch("pointerdown", gesturePoints[0], 1);
+    for (const point of gesturePoints.slice(1)) {
+      dispatch("pointermove", point, 1);
+    }
+    dispatch("pointerup", gesturePoints.at(-1), 0);
+  }, points);
 }
 
 function findBrowserBinary(product, binaryName) {

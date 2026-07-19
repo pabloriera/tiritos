@@ -7,6 +7,7 @@ Paint Arena is a Rust-authoritative multiplayer shooter with a vanilla TypeScrip
 - `server/` owns the HTTP API, player sessions, room lifecycle, map compilation, and the 30 Hz simulation.
 - `web/` owns keyboard input, local prediction, reconciliation, interpolation, the HUD, and Canvas rendering.
 - `maps/builtin/` stores the three supported map packages.
+- `maps/custom/` stores server-validated maps created with the browser designer (or `CUSTOM_MAP_DIR` when configured).
 - `protocol/palette.v2.json` defines the exact semantic colors shared by every map.
 
 ## Level 1 Map Language
@@ -36,6 +37,12 @@ The room lifecycle is `lobby → countdown → playing → ended`. A rematch ret
 The client advances bullet and grenade circles on every animation frame using the same kind-specific speed and heading as the server. Periodic snapshots reconcile accumulated error without leaving projectiles frozen between room polls. Authoritative crater snapshots update a cached map canvas and its collision pixels only when the crater list changes.
 
 Before room creation, the client runs a local sandbox over the selected map. Tab changes map packages, WASD uses the same swept vehicle, wall, and metro physics, and Space/G exercise local bullet, grenade, raster damage, and blast behavior without creating server state.
+
+## Map Designer
+
+The HUD occupies a fixed 44-pixel strip above the canvas, so gameplay and map-selection information never overlays the arena. From map selection, the designer reuses the arena canvas as a 1200×675 raster surface. Wall and erase brushes modify the raster directly; spawn and metro tools maintain semantic markers separately so player colors can be freely selected without weakening collision-color detection.
+
+Saving sends a compact base64 wall mask plus spawn/metro metadata to the server. The server validates dimensions, open spawn/metro locations, player counts, and metro pairing; builds the same `ValidatedMap` collision raster used by built-in rooms; renders a PNG; and persists the source record. The returned map is immediately selected and can be sandbox-tested or passed to normal room creation. Custom maps are recompiled from their persisted records on server startup.
 
 ## Death Rules
 

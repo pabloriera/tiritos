@@ -13,6 +13,8 @@ Controls:
 
 The map-selection screen is a local sandbox. Use Tab/Shift+Tab to change maps, WASD to drive, Space to fire, and G to throw grenades before creating the game with Enter. Wall damage and blast effects work in the sandbox without starting a room.
 
+The thin toolbar above the arena includes **Design map**. The designer provides wall and erase brushes, spawn and metro placement, adjustable brush size, and selectable/random player colors. Right-click a spawn or metro marker to remove it. A playable map needs at least two spawns; metro stations must be omitted or placed in groups of two or more. Saving returns directly to the new map in the selection sandbox, where it can be tested and used to create a multiplayer room.
+
 Walls create a strong friction/dissipation field as players approach them. Regular bullets keep flying until they hit a player or wall, or leave the arena. Wall impacts erase pixels from both the visible map and its collision raster, so repeated shots can open a passage. Grenades travel through walls, then damage nearby players and carve a larger opening when they detonate.
 
 Create a room with Enter, then share the invite URL with the second player. A match starts after a three-second countdown. The first player to reach the configured death limit loses.
@@ -35,6 +37,8 @@ Services:
 
 - Web client: http://localhost:5173
 - Rust server: http://localhost:8080
+
+Custom maps are stored as JSON raster records under `maps/custom` by default. Set `CUSTOM_MAP_DIR` to a mounted persistent directory in deployed environments.
 
 Run all validations:
 

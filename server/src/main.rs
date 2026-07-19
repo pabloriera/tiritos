@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
+    path::{Path as FilePath, PathBuf},
     sync::{Arc, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -13,7 +14,12 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use paint_arena_server::maps::{decoder::decode_and_validate_png, validator::ValidatedMap};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use paint_arena_server::maps::{
+    decoder::decode_and_validate_png,
+    palette::{FLOOR, METRO, Rgb, WALL},
+    validator::ValidatedMap,
+};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -47,12 +53,19 @@ const RESPAWN_TICKS: u64 = TICK_RATE_HZ * 2;
 const SPAWN_PROTECTION_TICKS: u64 = TICK_RATE_HZ;
 const METRO_COOLDOWN_SECONDS: f32 = 1.5;
 const ROOM_EXPIRY_MILLIS: u128 = 60 * 60 * 1000;
+const MIN_CUSTOM_MAP_WIDTH: u16 = 320;
+const MIN_CUSTOM_MAP_HEIGHT: u16 = 180;
+const MAX_CUSTOM_MAP_WIDTH: u16 = 2048;
+const MAX_CUSTOM_MAP_HEIGHT: u16 = 2048;
+const MAX_CUSTOM_PLAYERS: usize = 8;
+const MAX_CUSTOM_METROS: usize = 16;
 
 #[derive(Clone)]
 struct GameMap {
-    id: &'static str,
-    name: &'static str,
-    image_url: &'static str,
+    id: String,
+    name: String,
+    image_url: String,
+    image_bytes: Arc<Vec<u8>>,
     compiled: Arc<ValidatedMap>,
     manifest: Arc<MapManifest>,
 }
@@ -137,21 +150,50 @@ struct MapLocation {
     y: f32,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomMapRequest {
+    name: String,
+    width: u16,
+    height: u16,
+    wall_mask: String,
+    players: Vec<CustomPlayerDefinition>,
+    metro_stations: Vec<MapLocation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CustomPlayerDefinition {
+    color: String,
+    location: MapLocation,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SavedCustomMap {
+    id: String,
+    map: CustomMapRequest,
+}
+
 #[derive(Clone)]
 struct AppState {
     rooms: Arc<Mutex<HashMap<String, Room>>>,
     metrics: Arc<Mutex<ServerMetrics>>,
-    maps: Arc<HashMap<String, GameMap>>,
+    maps: Arc<Mutex<HashMap<String, GameMap>>>,
     room_streams: Arc<Mutex<HashMap<String, watch::Sender<String>>>>,
+    custom_map_dir: Arc<PathBuf>,
 }
 
 impl AppState {
     fn new() -> Self {
+        let custom_map_dir =
+            PathBuf::from(env::var("CUSTOM_MAP_DIR").unwrap_or_else(|_| "maps/custom".to_owned()));
+        let mut maps = load_builtin_maps();
+        load_saved_custom_maps(&custom_map_dir, &mut maps);
         Self {
             rooms: Arc::new(Mutex::new(HashMap::new())),
             metrics: Arc::new(Mutex::new(ServerMetrics::default())),
-            maps: Arc::new(load_builtin_maps()),
+            maps: Arc::new(Mutex::new(maps)),
             room_streams: Arc::new(Mutex::new(HashMap::new())),
+            custom_map_dir: Arc::new(custom_map_dir),
         }
     }
 }
@@ -188,9 +230,9 @@ impl Default for ServerMetrics {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MapSummary {
-    id: &'static str,
-    name: &'static str,
-    image_url: &'static str,
+    id: String,
+    name: String,
+    image_url: String,
     width: u16,
     height: u16,
     number_of_players: u8,
@@ -437,13 +479,8 @@ fn app() -> Router {
     let web_service = ServeDir::new(web_dist_dir).fallback(ServeFile::new(web_index));
 
     Router::new()
-        .route("/api/maps", get(list_maps))
-        .route("/api/maps/level1/map.png", get(level1_map_png))
-        .route(
-            "/api/maps/switchback-basin/map.png",
-            get(switchback_map_png),
-        )
-        .route("/api/maps/clover-junction/map.png", get(clover_map_png))
+        .route("/api/maps", get(list_maps).post(create_custom_map))
+        .route("/api/maps/{map_id}/map.png", get(get_map_png))
         .route("/api/monitor", get(monitor_snapshot))
         .route("/monitor", get(monitor_page))
         .route("/api/rooms", post(create_room))
@@ -498,9 +535,10 @@ fn load_builtin_maps() -> HashMap<String, GameMap> {
         (
             id.to_owned(),
             GameMap {
-                id,
-                name,
-                image_url,
+                id: id.to_owned(),
+                name: name.to_owned(),
+                image_url: image_url.to_owned(),
+                image_bytes: Arc::new(image_bytes.to_vec()),
                 compiled: Arc::new(compiled),
                 manifest: Arc::new(manifest),
             },
@@ -510,11 +548,13 @@ fn load_builtin_maps() -> HashMap<String, GameMap> {
 }
 
 async fn list_maps(State(state): State<AppState>) -> Json<Vec<MapSummary>> {
-    let mut maps = state.maps.values().collect::<Vec<_>>();
-    maps.sort_by_key(|map| match map.id {
+    let maps = state.maps.lock().expect("maps lock");
+    let mut maps = maps.values().collect::<Vec<_>>();
+    maps.sort_by_key(|map| match map.id.as_str() {
         "level1" => 0,
         "switchback-basin" => 1,
-        _ => 2,
+        "clover-junction" => 2,
+        _ => 3,
     });
     Json(
         maps.into_iter()
@@ -528,9 +568,9 @@ async fn list_maps(State(state): State<AppState>) -> Json<Vec<MapSummary>> {
                     .iter()
                     .map(|station| station.location)
                     .collect(),
-                id: map.id,
-                name: map.name,
-                image_url: map.image_url,
+                id: map.id.clone(),
+                name: map.name.clone(),
+                image_url: map.image_url.clone(),
                 width: map.compiled.width,
                 height: map.compiled.height,
                 number_of_players: map.manifest.number_of_players,
@@ -539,41 +579,293 @@ async fn list_maps(State(state): State<AppState>) -> Json<Vec<MapSummary>> {
     )
 }
 
-async fn level1_map_png() -> impl IntoResponse {
-    map_png_response(include_bytes!("../../maps/builtin/level1/map.png"))
-}
-
-async fn switchback_map_png() -> impl IntoResponse {
-    map_png_response(include_bytes!(
-        "../../maps/builtin/switchback-basin/map.png"
-    ))
-}
-
-async fn clover_map_png() -> impl IntoResponse {
-    map_png_response(include_bytes!("../../maps/builtin/clover-junction/map.png"))
-}
-
-fn map_png_response(bytes: &'static [u8]) -> impl IntoResponse {
-    (
+async fn get_map_png(
+    State(state): State<AppState>,
+    Path(map_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let map = get_map(&state, &map_id).ok_or(ApiError(StatusCode::NOT_FOUND, "map not found"))?;
+    Ok((
         [
             (header::CONTENT_TYPE, "image/png"),
             (header::CACHE_CONTROL, "public, max-age=3600"),
         ],
-        bytes,
+        map.image_bytes.as_ref().clone(),
     )
+        .into_response())
+}
+
+async fn create_custom_map(
+    State(state): State<AppState>,
+    Json(request): Json<CustomMapRequest>,
+) -> Result<Json<MapSummary>, ApiError> {
+    let id = loop {
+        let candidate = format!("custom-{}", generate_token(10).to_ascii_lowercase());
+        if !state
+            .maps
+            .lock()
+            .expect("maps lock")
+            .contains_key(&candidate)
+        {
+            break candidate;
+        }
+    };
+    let map = build_custom_map(&id, &request)
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "invalid custom map"))?;
+    persist_custom_map(&state.custom_map_dir, &id, &request).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not save custom map",
+        )
+    })?;
+    let summary = map_summary(&map);
+    state.maps.lock().expect("maps lock").insert(id, map);
+    Ok(Json(summary))
+}
+
+fn get_map(state: &AppState, map_id: &str) -> Option<GameMap> {
+    state.maps.lock().expect("maps lock").get(map_id).cloned()
+}
+
+fn map_summary(map: &GameMap) -> MapSummary {
+    MapSummary {
+        preview_spawn_x: map.spawn_for(1, 0).0,
+        preview_spawn_y: map.spawn_for(1, 0).1,
+        preview_player_color: map.player_color(1).to_owned(),
+        metro_stations: map
+            .manifest
+            .metro_stations
+            .iter()
+            .map(|station| station.location)
+            .collect(),
+        id: map.id.clone(),
+        name: map.name.clone(),
+        image_url: map.image_url.clone(),
+        width: map.compiled.width,
+        height: map.compiled.height,
+        number_of_players: map.manifest.number_of_players,
+    }
+}
+
+fn build_custom_map(id: &str, request: &CustomMapRequest) -> Result<GameMap, ()> {
+    if request.width < MIN_CUSTOM_MAP_WIDTH
+        || request.height < MIN_CUSTOM_MAP_HEIGHT
+        || request.width > MAX_CUSTOM_MAP_WIDTH
+        || request.height > MAX_CUSTOM_MAP_HEIGHT
+        || !(2..=MAX_CUSTOM_PLAYERS).contains(&request.players.len())
+        || request.metro_stations.len() > MAX_CUSTOM_METROS
+        || request.metro_stations.len() == 1
+    {
+        return Err(());
+    }
+    let name = sanitize_map_name(&request.name);
+    if name.is_empty() {
+        return Err(());
+    }
+    let mask = BASE64.decode(&request.wall_mask).map_err(|_| ())?;
+    let expected = usize::from(request.width) * usize::from(request.height);
+    if mask.len() != expected || mask.iter().any(|pixel| *pixel > 1) {
+        return Err(());
+    }
+    let walls = mask.iter().map(|pixel| *pixel == 1).collect::<Vec<_>>();
+    let compiled =
+        ValidatedMap::from_wall_pixels(request.width, request.height, walls).map_err(|_| ())?;
+
+    for player in &request.players {
+        if parse_hex_color(&player.color).is_none()
+            || player.color.eq_ignore_ascii_case("#800000")
+            || !valid_open_location(&compiled, player.location, PLAYER_RADIUS)
+        {
+            return Err(());
+        }
+    }
+    for location in &request.metro_stations {
+        if !valid_open_location(&compiled, *location, PLAYER_RADIUS + 8.0) {
+            return Err(());
+        }
+    }
+
+    let manifest = MapManifest {
+        number_of_players: request.players.len() as u8,
+        players: request
+            .players
+            .iter()
+            .enumerate()
+            .map(|(index, player)| MapPlayerDefinition {
+                slot: index as u8 + 1,
+                color: player.color.to_ascii_uppercase(),
+                spawn_locations: vec![player.location],
+            })
+            .collect(),
+        metro_stations: request
+            .metro_stations
+            .iter()
+            .enumerate()
+            .map(|(index, location)| MetroStationDefinition {
+                _id: format!("M{}", index + 1),
+                _color: "#0080FF".to_owned(),
+                location: *location,
+            })
+            .collect(),
+    };
+    let image_bytes = render_custom_map_png(&compiled, &manifest)?;
+    Ok(GameMap {
+        id: id.to_owned(),
+        name,
+        image_url: format!("/api/maps/{id}/map.png"),
+        image_bytes: Arc::new(image_bytes),
+        compiled: Arc::new(compiled),
+        manifest: Arc::new(manifest),
+    })
+}
+
+fn valid_open_location(map: &ValidatedMap, location: MapLocation, radius: f32) -> bool {
+    location.x.is_finite()
+        && location.y.is_finite()
+        && location.x >= radius
+        && location.y >= radius
+        && location.x < f32::from(map.width) - radius
+        && location.y < f32::from(map.height) - radius
+        && map.can_occupy(location.x, location.y, radius)
+}
+
+fn sanitize_map_name(name: &str) -> String {
+    name.trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(40)
+        .collect()
+}
+
+fn parse_hex_color(color: &str) -> Option<Rgb> {
+    let value = color.strip_prefix('#')?;
+    if value.len() != 6 {
+        return None;
+    }
+    Some(Rgb::new(
+        u8::from_str_radix(&value[0..2], 16).ok()?,
+        u8::from_str_radix(&value[2..4], 16).ok()?,
+        u8::from_str_radix(&value[4..6], 16).ok()?,
+    ))
+}
+
+fn render_custom_map_png(map: &ValidatedMap, manifest: &MapManifest) -> Result<Vec<u8>, ()> {
+    let width = usize::from(map.width);
+    let height = usize::from(map.height);
+    let mut pixels = vec![0; width * height * 3];
+    for y in 0..height {
+        for x in 0..width {
+            let color = if map.is_wall(x as f32, y as f32) {
+                WALL
+            } else {
+                FLOOR
+            };
+            set_rgb_pixel(&mut pixels, width, x, y, color);
+        }
+    }
+    for station in &manifest.metro_stations {
+        paint_square(&mut pixels, width, height, station.location, 12, METRO);
+    }
+    for player in &manifest.players {
+        if let (Some(location), Some(color)) = (
+            player.spawn_locations.first(),
+            parse_hex_color(&player.color),
+        ) {
+            paint_circle(&mut pixels, width, height, *location, 9, color);
+        }
+    }
+
+    let mut encoded = Vec::new();
+    {
+        let mut encoder =
+            png::Encoder::new(&mut encoded, u32::from(map.width), u32::from(map.height));
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|_| ())?;
+        writer.write_image_data(&pixels).map_err(|_| ())?;
+    }
+    Ok(encoded)
+}
+
+fn set_rgb_pixel(pixels: &mut [u8], width: usize, x: usize, y: usize, color: Rgb) {
+    let index = (y * width + x) * 3;
+    pixels[index] = color.red;
+    pixels[index + 1] = color.green;
+    pixels[index + 2] = color.blue;
+}
+
+fn paint_square(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    location: MapLocation,
+    radius: usize,
+    color: Rgb,
+) {
+    let center_x = location.x.round() as usize;
+    let center_y = location.y.round() as usize;
+    for y in center_y.saturating_sub(radius)..=(center_y + radius).min(height - 1) {
+        for x in center_x.saturating_sub(radius)..=(center_x + radius).min(width - 1) {
+            set_rgb_pixel(pixels, width, x, y, color);
+        }
+    }
+}
+
+fn paint_circle(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    location: MapLocation,
+    radius: usize,
+    color: Rgb,
+) {
+    let center_x = location.x.round() as usize;
+    let center_y = location.y.round() as usize;
+    for y in center_y.saturating_sub(radius)..=(center_y + radius).min(height - 1) {
+        for x in center_x.saturating_sub(radius)..=(center_x + radius).min(width - 1) {
+            let dx = x.abs_diff(center_x);
+            let dy = y.abs_diff(center_y);
+            if dx * dx + dy * dy <= radius * radius {
+                set_rgb_pixel(pixels, width, x, y, color);
+            }
+        }
+    }
+}
+
+fn persist_custom_map(dir: &FilePath, id: &str, map: &CustomMapRequest) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let bytes = serde_json::to_vec_pretty(&SavedCustomMap {
+        id: id.to_owned(),
+        map: map.clone(),
+    })?;
+    fs::write(dir.join(format!("{id}.json")), bytes)
+}
+
+fn load_saved_custom_maps(dir: &FilePath, maps: &mut HashMap<String, GameMap>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(saved) = serde_json::from_slice::<SavedCustomMap>(&bytes) else {
+            continue;
+        };
+        if let Ok(map) = build_custom_map(&saved.id, &saved.map) {
+            maps.insert(saved.id, map);
+        }
+    }
 }
 
 async fn create_room(
     State(state): State<AppState>,
     Json(request): Json<CreateRoomRequest>,
 ) -> Result<Json<CreateRoomResponse>, ApiError> {
-    let map = state
-        .maps
-        .get(&request.map_id)
-        .ok_or(ApiError(StatusCode::BAD_REQUEST, "unknown map"))?;
+    let map =
+        get_map(&state, &request.map_id).ok_or(ApiError(StatusCode::BAD_REQUEST, "unknown map"))?;
     let room_id = unique_room_id(&state);
     let token = generate_token(32);
-    let host = player_for_slot(&room_id, 1, true, &request.nickname, token.clone(), map);
+    let host = player_for_slot(&room_id, 1, true, &request.nickname, token.clone(), &map);
     let room = Room {
         id: room_id.clone(),
         map_id: request.map_id,
@@ -640,7 +932,7 @@ async fn join_room(
         .get(&room_id)
         .map(|room| room.map_id.clone())
         .ok_or(ApiError(StatusCode::NOT_FOUND, "room not found"))?;
-    let map = state.maps.get(&map_id).expect("room map");
+    let map = get_map(&state, &map_id).expect("room map");
     let mut rooms = state.rooms.lock().expect("rooms lock");
     let room = rooms.get_mut(&room_id).expect("room exists");
     if !matches!(room.phase, RoomPhase::Lobby | RoomPhase::Countdown)
@@ -663,7 +955,7 @@ async fn join_room(
         false,
         &request.nickname,
         token.clone(),
-        map,
+        &map,
     ));
     if room.phase == RoomPhase::Lobby {
         room.phase = RoomPhase::Countdown;
@@ -750,14 +1042,14 @@ async fn leave_room(
         room.winner_slot = None;
         room.bullets.clear();
         room.wall_craters.clear();
-        let map = state.maps.get(&room.map_id).expect("room map");
+        let map = get_map(&state, &room.map_id).expect("room map");
         room.wall_pixels = map.compiled.wall_pixels();
         room.blasts.clear();
         room.feed.clear();
         if let Some(host) = room.players.first_mut() {
             host.kills = 0;
             host.deaths = 0;
-            respawn_player(host, map, room.tick);
+            respawn_player(host, &map, room.tick);
             host.invulnerable_until_tick = 0;
         }
         publish_room(&state, room);
@@ -797,7 +1089,7 @@ async fn rematch_room(
     if room.phase != RoomPhase::Ended {
         return Err(ApiError(StatusCode::CONFLICT, "match has not ended"));
     }
-    let map = state.maps.get(&room.map_id).expect("room map");
+    let map = get_map(&state, &room.map_id).expect("room map");
     room.tick = 0;
     room.phase = RoomPhase::Countdown;
     room.phase_ends_at_tick = Some(COUNTDOWN_TICKS);
@@ -810,7 +1102,7 @@ async fn rematch_room(
     for player in &mut room.players {
         player.kills = 0;
         player.deaths = 0;
-        respawn_player(player, map, 0);
+        respawn_player(player, &map, 0);
         player.invulnerable_until_tick = 0;
     }
     push_feed(room, "Rematch starts in 3 seconds".to_owned());
@@ -843,10 +1135,10 @@ fn spawn_room_tick_loop(state: AppState) {
                 now.saturating_sub(room.last_activity_millis) < ROOM_EXPIRY_MILLIS
             });
             for room in rooms.values_mut() {
-                let map = state.maps.get(&room.map_id).expect("room map");
+                let map = get_map(&state, &room.map_id).expect("room map");
                 let should_publish =
                     matches!(room.phase, RoomPhase::Countdown | RoomPhase::Playing);
-                tick_room(room, map, TICK_SECONDS);
+                tick_room(room, &map, TICK_SECONDS);
                 if should_publish {
                     publish_room(&state, room);
                 }
@@ -1479,6 +1771,37 @@ mod tests {
         }
     }
 
+    fn custom_map_request() -> CustomMapRequest {
+        let width = MIN_CUSTOM_MAP_WIDTH;
+        let height = MIN_CUSTOM_MAP_HEIGHT;
+        let mut mask = vec![0_u8; usize::from(width) * usize::from(height)];
+        for y in 70..110 {
+            for x in 150..170 {
+                mask[y * usize::from(width) + x] = 1;
+            }
+        }
+        CustomMapRequest {
+            name: "Brush Test".to_owned(),
+            width,
+            height,
+            wall_mask: BASE64.encode(mask),
+            players: vec![
+                CustomPlayerDefinition {
+                    color: "#12ADEF".to_owned(),
+                    location: MapLocation { x: 40.0, y: 40.0 },
+                },
+                CustomPlayerDefinition {
+                    color: "#EFAD12".to_owned(),
+                    location: MapLocation { x: 280.0, y: 140.0 },
+                },
+            ],
+            metro_stations: vec![
+                MapLocation { x: 80.0, y: 140.0 },
+                MapLocation { x: 240.0, y: 40.0 },
+            ],
+        }
+    }
+
     fn horizontal_wall_edge(map: &GameMap) -> (f32, f32) {
         let wall_pixels = map.compiled.wall_pixels();
         for y in 20..u32::from(map.compiled.height) - 20 {
@@ -1522,6 +1845,26 @@ mod tests {
             map.metro_destination(1048.0, 215.0, PLAYER_RADIUS),
             Some((230.0, 367.0))
         );
+    }
+
+    #[test]
+    fn custom_map_builds_playable_raster_and_manifest() {
+        let map = build_custom_map("custom-test", &custom_map_request()).expect("custom map");
+
+        assert_eq!(map.name, "Brush Test");
+        assert_eq!(map.manifest.number_of_players, 2);
+        assert_eq!(map.manifest.metro_stations.len(), 2);
+        assert!(map.compiled.is_wall(160.0, 90.0));
+        assert!(!map.compiled.is_wall(40.0, 40.0));
+        assert!(map.image_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn custom_map_rejects_a_spawn_inside_a_wall() {
+        let mut request = custom_map_request();
+        request.players[0].location = MapLocation { x: 160.0, y: 90.0 };
+
+        assert!(build_custom_map("custom-test", &request).is_err());
     }
 
     #[test]

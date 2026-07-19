@@ -14,6 +14,31 @@ pub struct ValidatedMap {
 }
 
 impl ValidatedMap {
+    pub fn from_wall_pixels(
+        width: u16,
+        height: u16,
+        walls: Vec<bool>,
+    ) -> Result<Self, ValidationError> {
+        if width == 0 || height == 0 {
+            return Err(ValidationError::EmptyMap);
+        }
+        let expected = usize::from(width) * usize::from(height);
+        if walls.len() != expected {
+            return Err(ValidationError::DimensionMismatch {
+                expected,
+                actual: walls.len(),
+            });
+        }
+        if walls.iter().all(|wall| *wall) {
+            return Err(ValidationError::MissingFloor);
+        }
+        Ok(Self {
+            width,
+            height,
+            walls,
+        })
+    }
+
     pub fn wall_pixels(&self) -> Vec<bool> {
         self.walls.clone()
     }
@@ -81,11 +106,7 @@ pub fn validate_pixels(
         return Err(ValidationError::MissingFloor);
     }
 
-    Ok(ValidatedMap {
-        width,
-        height,
-        walls,
-    })
+    ValidatedMap::from_wall_pixels(width, height, walls)
 }
 
 fn coordinate_for_index(index: usize, width: u16) -> Coordinate {
