@@ -123,7 +123,7 @@ async function createTwoPlayerRoom(playerOne, playerTwo) {
   }
 
   await playerTwo.get(inviteUrl);
-  await waitForText(playerTwo, "#mode-line", "Playing");
+  await waitForText(playerTwo, "#mode-line", "Match live");
   await waitForText(playerOne, "#player-list", "Player2");
 
   return roomId;
@@ -328,8 +328,10 @@ async function waitForText(driver, selector, expectedText) {
   await driver.wait(
     async () => {
       try {
-        const element = await driver.findElement(By.css(selector));
-        const text = await element.getText();
+        const text = await driver.executeScript(
+          "return document.querySelector(arguments[0])?.textContent ?? ''",
+          selector,
+        );
         return text.toLowerCase().includes(expected);
       } catch {
         return false;

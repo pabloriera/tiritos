@@ -176,7 +176,7 @@ try {
   );
   await playerOne.actions().keyDown(Key.SHIFT).sendKeys(Key.TAB).keyUp(Key.SHIFT).perform();
   await waitForText(playerOne, "#map-line", "Selenium Brushworks");
-  await pressKey(playerOne, Key.ENTER);
+  await playerOne.findElement(By.css("#create-match")).click();
   await playerOne.wait(until.urlMatches(/\/game\/[A-Z0-9]+$/), 10_000);
   const inviteUrl = await playerOne.getCurrentUrl();
   const roomId = inviteUrl.match(/\/game\/([A-Z0-9]+)$/)?.[1];
@@ -186,9 +186,14 @@ try {
   }
 
   await waitForText(playerOne, "#player-list", "Player1");
+  await playerOne.wait(
+    async () => playerOne.findElement(By.css("#copy-invite")).isDisplayed(),
+    10_000,
+    "Lobby did not show its invite action",
+  );
 
   await playerTwo.get(inviteUrl);
-  await waitForText(playerTwo, "#mode-line", "Playing");
+  await waitForText(playerTwo, "#mode-line", "Match live");
   await waitForText(playerTwo, "#player-list", "Player2");
   await waitForText(playerOne, "#player-list", "Player2");
 
@@ -403,8 +408,10 @@ async function waitForText(driver, selector, expectedText) {
   await driver.wait(
     async () => {
       try {
-        const element = await driver.findElement(By.css(selector));
-        const text = await element.getText();
+        const text = await driver.executeScript(
+          "return document.querySelector(arguments[0])?.textContent ?? ''",
+          selector,
+        );
         return text.toLowerCase().includes(expected);
       } catch {
         return false;

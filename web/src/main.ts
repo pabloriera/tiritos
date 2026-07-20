@@ -191,9 +191,11 @@ const DEFAULT_MAP_WIDTH = 1552;
 const DEFAULT_MAP_HEIGHT = 783;
 const DESIGNER_MAP_WIDTH = 1200;
 const DESIGNER_MAP_HEIGHT = 675;
-const FLOOR_COLOR = "#808000";
-const WALL_COLOR = "#800000";
-const METRO_COLOR = "#0080ff";
+const FLOOR_COLOR = "#2430be";
+const WALL_COLOR = "#f230bc";
+const METRO_COLOR = "#23e8ec";
+const FLOOR_RGB = [36, 48, 190] as const;
+const WALL_RGB = [242, 48, 188] as const;
 const PLAYER_RADIUS = 10;
 const MAX_SPEED = 165;
 const ACCELERATION = 300;
@@ -295,6 +297,7 @@ if (!renderingContext) {
 const canvasContext = renderingContext;
 
 installKeyboardControls();
+installHudControls();
 installDesignerControls();
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
@@ -314,12 +317,26 @@ function renderGameShell() {
     <main class="game-screen">
       <canvas id="map-canvas" width="960" height="540" aria-label="Paint Arena map"></canvas>
       <section id="hud" class="hud" aria-live="polite">
-        <p id="mode-line" class="mode-line"></p>
-        <p id="map-line" class="map-line"></p>
+        <div class="game-mark" aria-label="Paint Arena"><span>Paint</span><strong>Arena</strong></div>
+        <div class="stage-copy">
+          <p id="mode-line" class="mode-line"></p>
+          <p id="map-line" class="map-line"></p>
+        </div>
+        <div id="selection-controls" class="selection-controls" hidden>
+          <button id="map-previous" class="hud-button icon-button" type="button" aria-label="Previous map">◀</button>
+          <button id="map-next" class="hud-button icon-button" type="button" aria-label="Next map">▶</button>
+          <button id="create-match" class="hud-button primary" type="button">Create match</button>
+          <button id="designer-button" class="hud-button" type="button">Design map</button>
+        </div>
         <ol id="player-list" class="player-list"></ol>
         <ol id="event-feed" class="event-feed"></ol>
+        <p id="control-hint" class="control-hint"></p>
+        <div id="room-controls" class="room-controls" hidden>
+          <button id="copy-invite" class="hud-button primary" type="button" hidden>Copy invite</button>
+          <button id="rematch-button" class="hud-button primary" type="button" hidden>Rematch</button>
+          <button id="leave-button" class="hud-button" type="button">Maps</button>
+        </div>
         <p id="ws-status" class="connection-line"></p>
-        <button id="designer-button" class="hud-button" type="button">Design map</button>
         <div id="designer-controls" class="designer-controls" hidden>
           <input id="designer-name" class="designer-name" maxlength="40" value="Untitled Arena" aria-label="Map name">
           <div class="tool-group" role="group" aria-label="Drawing tool">
@@ -336,10 +353,6 @@ function renderGameShell() {
           <button id="designer-cancel" class="hud-button" type="button">Cancel</button>
           <span id="designer-message" class="designer-message"></span>
         </div>
-      </section>
-      <section id="invite-modal" class="invite-modal" hidden>
-        <span>Invite</span>
-        <a id="invite-link" href=""></a>
       </section>
     </main>
   `;
@@ -428,6 +441,31 @@ function installKeyboardControls() {
       activeKeys.delete(inputKey);
     }
   });
+}
+
+function installHudControls() {
+  document.querySelector<HTMLButtonElement>("#map-previous")
+    ?.addEventListener("click", () => selectRelativeMap(-1));
+  document.querySelector<HTMLButtonElement>("#map-next")
+    ?.addEventListener("click", () => selectRelativeMap(1));
+  document.querySelector<HTMLButtonElement>("#create-match")
+    ?.addEventListener("click", () => void createRoomFromSelection());
+  document.querySelector<HTMLButtonElement>("#leave-button")
+    ?.addEventListener("click", resetToMapSelection);
+  document.querySelector<HTMLButtonElement>("#rematch-button")
+    ?.addEventListener("click", () => void requestRematch());
+  document.querySelector<HTMLButtonElement>("#copy-invite")
+    ?.addEventListener("click", async (event) => {
+      if (!inviteUrl) {
+        return;
+      }
+      await copyInviteToClipboard(inviteUrl);
+      const button = event.currentTarget as HTMLButtonElement;
+      button.textContent = "Copied!";
+      window.setTimeout(() => {
+        button.textContent = "Copy invite";
+      }, 1400);
+    });
 }
 
 function installDesignerControls() {
@@ -762,7 +800,7 @@ async function saveDesignedMap() {
     const pixels = state.context.getImageData(0, 0, state.width, state.height);
     const wallMask = new Uint8Array(state.width * state.height);
     for (let pixel = 0; pixel < wallMask.length; pixel += 1) {
-      wallMask[pixel] = pixels.data[pixel * 4 + 1] < 64 ? 1 : 0;
+      wallMask[pixel] = isWallPixelIndex(pixels, pixel) ? 1 : 0;
     }
     const saved = await fetchJson<MapSummary>("/api/maps", {
       method: "POST",
@@ -1336,13 +1374,13 @@ function syncWallCraters(craters: WallCrater[]) {
         }
         const index = (y * mapPixels.width + x) * 4;
         if (
-          mapPixels.data[index] === 128 &&
-          mapPixels.data[index + 1] === 0 &&
-          mapPixels.data[index + 2] === 0
+          mapPixels.data[index] === WALL_RGB[0] &&
+          mapPixels.data[index + 1] === WALL_RGB[1] &&
+          mapPixels.data[index + 2] === WALL_RGB[2]
         ) {
-          dynamicMapPixels.data[index] = 128;
-          dynamicMapPixels.data[index + 1] = 128;
-          dynamicMapPixels.data[index + 2] = 0;
+          dynamicMapPixels.data[index] = FLOOR_RGB[0];
+          dynamicMapPixels.data[index + 1] = FLOOR_RGB[1];
+          dynamicMapPixels.data[index + 2] = FLOOR_RGB[2];
         }
       }
     }
@@ -1661,9 +1699,9 @@ function isWallPixel(x: number, y: number) {
 
   const index = (pixelY * collisionPixels.width + pixelX) * 4;
   return (
-    collisionPixels.data[index] === 128 &&
-    collisionPixels.data[index + 1] === 0 &&
-    collisionPixels.data[index + 2] === 0
+    collisionPixels.data[index] === WALL_RGB[0] &&
+    collisionPixels.data[index + 1] === WALL_RGB[1] &&
+    collisionPixels.data[index + 2] === WALL_RGB[2]
   );
 }
 
@@ -1720,9 +1758,9 @@ function isPlayerBlockingWallPixel(x: number, y: number) {
 function isWallPixelIndex(pixels: ImageData, pixel: number) {
   const index = pixel * 4;
   return (
-    pixels.data[index] === 128 &&
-    pixels.data[index + 1] === 0 &&
-    pixels.data[index + 2] === 0
+    pixels.data[index] === WALL_RGB[0] &&
+    pixels.data[index + 1] === WALL_RGB[1] &&
+    pixels.data[index + 2] === WALL_RGB[2]
   );
 }
 
@@ -2049,8 +2087,12 @@ function updateHud() {
   const mapLine = document.querySelector<HTMLParagraphElement>("#map-line");
   const playerList = document.querySelector<HTMLOListElement>("#player-list");
   const eventFeed = document.querySelector<HTMLOListElement>("#event-feed");
-  const inviteModal = document.querySelector<HTMLElement>("#invite-modal");
-  const inviteLink = document.querySelector<HTMLAnchorElement>("#invite-link");
+  const controlHint = document.querySelector<HTMLParagraphElement>("#control-hint");
+  const selectionControls = document.querySelector<HTMLElement>("#selection-controls");
+  const roomControls = document.querySelector<HTMLElement>("#room-controls");
+  const copyInvite = document.querySelector<HTMLButtonElement>("#copy-invite");
+  const rematchButton = document.querySelector<HTMLButtonElement>("#rematch-button");
+  const leaveButton = document.querySelector<HTMLButtonElement>("#leave-button");
   const designerButton = document.querySelector<HTMLButtonElement>("#designer-button");
   const designerControls = document.querySelector<HTMLElement>("#designer-controls");
   const designerName = document.querySelector<HTMLInputElement>("#designer-name");
@@ -2061,6 +2103,9 @@ function updateHud() {
   const designerMessage = document.querySelector<HTMLElement>("#designer-message");
 
   const designerVisible = activeMode === "designingMap" || activeMode === "previewingDesign";
+  if (hud) {
+    hud.dataset.stage = getHudStage();
+  }
   hud?.classList.toggle("designer-active", designerVisible);
   hud?.classList.toggle("preview-active", activeMode === "previewingDesign");
 
@@ -2078,6 +2123,35 @@ function updateHud() {
 
   if (eventFeed) {
     setInnerHtmlIfChanged(eventFeed, getEventFeedHtml());
+  }
+  if (controlHint) {
+    setTextIfChanged(controlHint, getControlHint());
+  }
+
+  const selecting = activeMode === "selectingMap";
+  const isHost = activeRoom
+    ? sessionStorage.getItem(joinedKey(activeRoom.id)) === "host"
+    : false;
+  if (selectionControls) {
+    selectionControls.hidden = !selecting;
+  }
+  if (roomControls) {
+    roomControls.hidden = activeRoom === null && activeMode !== "missing";
+  }
+  if (copyInvite) {
+    copyInvite.hidden = !(
+      isHost &&
+      inviteVisible &&
+      inviteUrl &&
+      activeRoom &&
+      (activeRoom.phase === "lobby" || activeRoom.phase === "countdown")
+    );
+  }
+  if (rematchButton) {
+    rematchButton.hidden = !(isHost && activeRoom?.phase === "ended");
+  }
+  if (leaveButton) {
+    leaveButton.textContent = activeMode === "missing" ? "Choose a map" : "Maps";
   }
 
   if (designerButton) {
@@ -2111,26 +2185,33 @@ function updateHud() {
     }
   }
 
-  if (inviteModal && inviteLink) {
-    const shouldShowInvite = inviteVisible && inviteUrl !== null;
-    inviteModal.hidden = !shouldShowInvite;
+}
 
-    if (inviteUrl) {
-      inviteLink.href = inviteUrl;
-      setTextIfChanged(inviteLink, inviteUrl);
-    }
+function getHudStage() {
+  if (activeMode === "designingMap" || activeMode === "previewingDesign") {
+    return "designer";
   }
+  if (activeMode === "selectingMap" || activeMode === "creatingRoom") {
+    return "selection";
+  }
+  if (activeMode === "ended") {
+    return "results";
+  }
+  if (activeMode === "playing") {
+    return "playing";
+  }
+  return "lobby";
 }
 
 function getModeText() {
   if (activeMode === "previewingDesign") {
-    return "Preview";
+    return "Test drive";
   }
   if (activeMode === "designingMap") {
-    return "Designer";
+    return "Map studio";
   }
   if (activeMode === "creatingRoom") {
-    return "Creating";
+    return "Creating match";
   }
 
   if (activeMode === "missing") {
@@ -2139,7 +2220,7 @@ function getModeText() {
 
   if (activeRoom) {
     if (activeRoom.phase === "playing") {
-      return "Playing";
+      return "Match live";
     }
     if (activeRoom.phase === "countdown") {
       const ticks = Math.max(
@@ -2152,15 +2233,11 @@ function getModeText() {
       const winner = activeRoom.players.find(
         (player) => player.slot === activeRoom?.winnerSlot,
       );
-      const rematchHint =
-        sessionStorage.getItem(joinedKey(activeRoom.id)) === "host"
-          ? " · Enter for rematch"
-          : "";
       return winner
-        ? `${winner.nickname} wins${rematchHint}`
-        : `Match ended${rematchHint}`;
+        ? `${winner.nickname} wins`
+        : "Match ended";
     }
-    return "Waiting for opponent";
+    return "Waiting for rival";
   }
 
   if (activeMode === "waiting") {
@@ -2168,7 +2245,7 @@ function getModeText() {
   }
 
   if (activeMode === "selectingMap") {
-    return "Sandbox";
+    return "Choose arena";
   }
 
   return "Create game";
@@ -2176,21 +2253,21 @@ function getModeText() {
 
 function getMapText() {
   if (activeMode === "previewingDesign") {
-    return "Unsaved map preview";
+    return designerState ? escapeHtml(designerState.name) : "Unsaved map";
   }
   if (activeMode === "designingMap") {
-    return "Paint walls · place spawns/metros · right-click removes markers";
+    return designerState ? escapeHtml(designerState.name) : "Untitled arena";
   }
   if (!activeMap) {
     return "No maps";
   }
 
   if (activeMode === "selectingMap") {
-    return `<strong>${escapeHtml(activeMap.name)} · ${activeMap.numberOfPlayers} players · Tab map · Arrow keys · Space fire · Enter create</strong>`;
+    return `<strong>${escapeHtml(activeMap.name)}</strong><span>${selectedMapIndex + 1}/${maps.length} · ${activeMap.numberOfPlayers} players</span>`;
   }
 
   if (activeRoom) {
-    return `${escapeHtml(activeRoom.id)} / ${escapeHtml(activeMap.name)}`;
+    return `<strong>${escapeHtml(activeMap.name)}</strong><span>Room ${escapeHtml(activeRoom.id)}</span>`;
   }
 
   return escapeHtml(activeMap.name);
@@ -2202,16 +2279,47 @@ function getPlayerListHtml() {
   }
 
   const room = activeRoom;
+  const localSlot = getJoinedSlot(room.id);
   return room.players
     .map((player) => {
       const color = player.color || PLAYER_COLORS[player.slot - 1] || PLAYER_COLORS[0];
-      const status =
-        player.state === "respawning"
-          ? `respawn ${Math.max(0, Math.ceil(((player.respawnAtTick ?? room.tick) - room.tick) / 30))}s`
-          : `${player.health} hp`;
-      return `<li><span class="player-dot" style="--player-color: ${color}"></span><span>${escapeHtml(player.nickname)}</span><span>${player.kills}K ${player.deaths}D/${room.deathLimit}</span><span>${status}</span></li>`;
+      let status = player.host ? "Host" : "Ready";
+      if (room.phase === "playing") {
+        status = player.state === "respawning"
+          ? `Back in ${Math.max(0, Math.ceil(((player.respawnAtTick ?? room.tick) - room.tick) / 30))}s`
+          : `${player.health} HP · ${player.kills} KO`;
+      } else if (room.phase === "ended") {
+        status = `${player.kills} KO · ${player.deaths}/${room.deathLimit}`;
+      }
+      const localClass = player.slot === localSlot ? " class=\"local-player\"" : "";
+      return `<li${localClass}><span class="player-dot" style="--player-color: ${color}"></span><span>${escapeHtml(player.nickname)}</span><span class="player-status">${status}</span></li>`;
     })
     .join("");
+}
+
+function getControlHint() {
+  if (activeMode === "selectingMap") {
+    return "Tab switches maps · Enter creates match";
+  }
+  if (activeMode === "designingMap") {
+    return "Paint, place, preview, then save";
+  }
+  if (activeMode === "previewingDesign") {
+    return "Arrow keys move · Space fires";
+  }
+  if (activeRoom?.phase === "lobby") {
+    return "Share the invite to start";
+  }
+  if (activeRoom?.phase === "countdown") {
+    return "Get ready";
+  }
+  if (activeRoom?.phase === "playing") {
+    return "Arrow keys move · Space fires";
+  }
+  if (activeRoom?.phase === "ended") {
+    return "Play again or choose another arena";
+  }
+  return "";
 }
 
 function getEventFeedHtml() {

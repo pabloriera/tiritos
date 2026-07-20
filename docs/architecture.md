@@ -12,14 +12,14 @@ Paint Arena is a Rust-authoritative multiplayer shooter with a vanilla TypeScrip
 
 ## Level 1 Map Language
 
-`level1.png` is the visual and semantic baseline. Maps use exact, flat colors:
+`level1.png` is the semantic source baseline. Source maps use exact, flat colors:
 
 - `#808000`: traversable floor
 - `#800000`: collidable wall
 - `#0080FF`: metro station square; all stations share one network
 - `#FF00FF`, `#80FFFF`, `#4000FF`: player spawn circles
 
-The built-in order is Level 1, Switchback Basin, then Clover Junction. Each `map.json` declares `numberOfPlayers`, every player's slot/color/spawn locations, and every metro station's ID/color/location. The server uses this manifest directly, so maps may contain any number of declared spawns or stations. At startup, Rust expands indexed PNG data, rejects unknown colors, compiles wall occupancy, and re-renders the served image through the same raster renderer used by designer maps. This keeps visible built-in wall pixels identical to their authoritative collision masks.
+The built-in order is Level 1, Switchback Basin, then Clover Junction. Each `map.json` declares `numberOfPlayers`, every player's slot/color/spawn locations, and every metro station's ID/color/location. The server uses this manifest directly, so maps may contain any number of declared spawns or stations. At startup, Rust expands indexed PNG data, rejects unknown colors, compiles wall occupancy, and re-renders the served image through the same raster renderer used by designer maps. The presentation palette is electric-blue floor (`#2430BE`), neon-magenta wall (`#F230BC`), and cyan metro (`#23E8EC`). This keeps visible built-in wall pixels identical to their authoritative collision masks while decoupling source semantics from presentation.
 
 ## Authoritative Tick
 
@@ -40,7 +40,7 @@ Before room creation, the client runs a local sandbox over the selected map. Tab
 
 ## Map Designer
 
-The HUD occupies a fixed 44-pixel strip above the canvas, so gameplay and map-selection information never overlays the arena. From map selection, the designer reuses the arena canvas as a 1200×675 raster surface. Wall and erase brushes modify the raster directly; spawn and metro tools maintain semantic markers separately so player colors can be freely selected without weakening collision-color detection.
+The HUD occupies a fixed strip above the canvas, so gameplay and map-selection information never overlays the arena. It changes priorities by stage: map browsing and match creation during selection; invite and readiness during lobby/countdown; player health, score, events, and exit during play; rematch/map actions after results; and editing tools during design. From map selection, the designer reuses the arena canvas as a 1200×675 raster surface. Wall and erase brushes modify the raster directly; spawn and metro tools maintain semantic markers separately so player colors can be freely selected without weakening collision-color detection.
 
 Preview mode builds the unsaved raster and markers in memory, then runs the normal local vehicle, metro, projectile, and destructible-wall simulation without changing the editable source. Saving sends a compact base64 wall mask plus spawn/metro metadata to the server. The server validates dimensions, open spawn/metro locations, player counts, and metro pairing; builds the same `ValidatedMap` collision raster used by built-in rooms; renders a PNG; and persists the source record. The returned map is immediately selected and can be sandbox-tested or passed to normal room creation. Custom maps are recompiled from their persisted records on server startup.
 

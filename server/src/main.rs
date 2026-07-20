@@ -16,9 +16,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use paint_arena_server::maps::{
-    decoder::decode_and_validate_png,
-    palette::{FLOOR, METRO, Rgb, WALL},
-    validator::ValidatedMap,
+    decoder::decode_and_validate_png, palette::Rgb, validator::ValidatedMap,
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -60,6 +58,9 @@ const MAX_CUSTOM_MAP_WIDTH: u16 = 2048;
 const MAX_CUSTOM_MAP_HEIGHT: u16 = 2048;
 const MAX_CUSTOM_PLAYERS: usize = 8;
 const MAX_CUSTOM_METROS: usize = 16;
+const DISPLAY_FLOOR: Rgb = Rgb::new(36, 48, 190);
+const DISPLAY_WALL: Rgb = Rgb::new(242, 48, 188);
+const DISPLAY_METRO: Rgb = Rgb::new(35, 232, 236);
 
 #[derive(Clone)]
 struct GameMap {
@@ -508,21 +509,21 @@ fn load_builtin_maps() -> HashMap<String, GameMap> {
         (
             "level1",
             "Level 1",
-            "/api/maps/level1/map.png?v=3",
+            "/api/maps/level1/map.png?v=4",
             include_bytes!("../../maps/builtin/level1/map.png").as_slice(),
             include_bytes!("../../maps/builtin/level1/map.json").as_slice(),
         ),
         (
             "switchback-basin",
             "Switchback Basin",
-            "/api/maps/switchback-basin/map.png?v=3",
+            "/api/maps/switchback-basin/map.png?v=4",
             include_bytes!("../../maps/builtin/switchback-basin/map.png").as_slice(),
             include_bytes!("../../maps/builtin/switchback-basin/map.json").as_slice(),
         ),
         (
             "clover-junction",
             "Clover Junction",
-            "/api/maps/clover-junction/map.png?v=3",
+            "/api/maps/clover-junction/map.png?v=4",
             include_bytes!("../../maps/builtin/clover-junction/map.png").as_slice(),
             include_bytes!("../../maps/builtin/clover-junction/map.json").as_slice(),
         ),
@@ -716,7 +717,7 @@ fn build_custom_map(id: &str, request: &CustomMapRequest) -> Result<GameMap, ()>
     Ok(GameMap {
         id: id.to_owned(),
         name,
-        image_url: format!("/api/maps/{id}/map.png"),
+        image_url: format!("/api/maps/{id}/map.png?v=4"),
         image_bytes: Arc::new(image_bytes),
         compiled: Arc::new(compiled),
         manifest: Arc::new(manifest),
@@ -760,15 +761,22 @@ fn render_custom_map_png(map: &ValidatedMap, manifest: &MapManifest) -> Result<V
     for y in 0..height {
         for x in 0..width {
             let color = if map.is_wall(x as f32, y as f32) {
-                WALL
+                DISPLAY_WALL
             } else {
-                FLOOR
+                DISPLAY_FLOOR
             };
             set_rgb_pixel(&mut pixels, width, x, y, color);
         }
     }
     for station in &manifest.metro_stations {
-        paint_square(&mut pixels, width, height, station.location, 12, METRO);
+        paint_square(
+            &mut pixels,
+            width,
+            height,
+            station.location,
+            12,
+            DISPLAY_METRO,
+        );
     }
     for player in &manifest.players {
         if let (Some(location), Some(color)) = (
@@ -1894,9 +1902,27 @@ mod tests {
     #[test]
     fn builtin_rendered_rasters_match_authoritative_collision() {
         for map in load_builtin_maps().into_values() {
-            let rendered =
-                decode_and_validate_png(&map.image_bytes).expect("rendered built-in map");
-            assert_eq!(rendered, *map.compiled, "{} collision raster", map.id);
+            let decoder = png::Decoder::new(std::io::Cursor::new(map.image_bytes.as_slice()));
+            let mut reader = decoder.read_info().expect("rendered built-in header");
+            let mut buffer = vec![0; reader.output_buffer_size()];
+            let output = reader
+                .next_frame(&mut buffer)
+                .expect("rendered built-in pixels");
+            let pixels = &buffer[..output.buffer_size()];
+            for y in 0..usize::from(map.compiled.height) {
+                for x in 0..usize::from(map.compiled.width) {
+                    let index = (y * usize::from(map.compiled.width) + x) * 3;
+                    let rendered_wall = pixels[index] == DISPLAY_WALL.red
+                        && pixels[index + 1] == DISPLAY_WALL.green
+                        && pixels[index + 2] == DISPLAY_WALL.blue;
+                    assert_eq!(
+                        rendered_wall,
+                        map.compiled.is_wall(x as f32, y as f32),
+                        "{} collision raster at {x},{y}",
+                        map.id
+                    );
+                }
+            }
         }
     }
 

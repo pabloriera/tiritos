@@ -12,11 +12,11 @@ Controls:
 
 The map-selection screen is a local sandbox. Use Tab/Shift+Tab to change maps, the arrow keys to drive, and Space to fire before creating the game with Enter. Wall damage and blast effects work in the sandbox without starting a room.
 
-The thin toolbar above the arena includes **Design map**. The designer provides wall and erase brushes, spawn and metro placement, adjustable brush size, and selectable/random player colors. Right-click a spawn or metro marker to remove it. Use **Preview** to drive, fire, use metros, and test destructible collision before saving. A playable map needs at least two spawns; metro stations must be omitted or placed in groups of two or more. Saving returns directly to the new map in the selection sandbox, where it can be tested and used to create a multiplayer room.
+The game header changes with the current stage: map browsing and creation actions during selection, invite/readiness controls in the lobby, player status and events during play, result/rematch actions after a match, and editing tools in the map studio. The designer provides wall and erase brushes, spawn and metro placement, adjustable brush size, and selectable/random player colors. Right-click a spawn or metro marker to remove it. Use **Preview** to drive, fire, use metros, and test destructible collision before saving. A playable map needs at least two spawns; metro stations must be omitted or placed in groups of two or more. Saving returns directly to the new map in the selection sandbox, where it can be tested and used to create a multiplayer room.
 
 Walls create a strong friction/dissipation field as players approach them. Regular bullets keep flying until they hit a player or wall, or leave the arena. Wall impacts erase pixels from both the visible map and its collision raster, so repeated shots can open a passage. Grenades travel through walls, then damage nearby players and carve a larger opening when they detonate.
 
-Create a room with Enter, then share the invite URL with the second player. A match starts after a three-second countdown. The first player to reach the configured death limit loses.
+Create a room with the header action or Enter, then copy its invite from the lobby header. A match starts after a three-second countdown. The first player to reach the configured death limit loses.
 
 ## Development with VS Code Dev Containers
 
