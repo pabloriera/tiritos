@@ -50,7 +50,6 @@ const MIN_BLOCKING_WALL_COMPONENT_PIXELS: usize = 12;
 const COUNTDOWN_TICKS: u64 = TICK_RATE_HZ * 3;
 const RESPAWN_TICKS: u64 = TICK_RATE_HZ * 2;
 const SPAWN_PROTECTION_TICKS: u64 = TICK_RATE_HZ;
-const METRO_COOLDOWN_SECONDS: f32 = 1.5;
 const ROOM_EXPIRY_MILLIS: u128 = 60 * 60 * 1000;
 const MIN_CUSTOM_MAP_WIDTH: u16 = 320;
 const MIN_CUSTOM_MAP_HEIGHT: u16 = 180;
@@ -107,15 +106,20 @@ impl GameMap {
             .unwrap_or("#FFFFFF")
     }
 
-    fn metro_destination(&self, x: f32, y: f32, radius: f32) -> Option<(f32, f32)> {
+    fn metro_station_at(&self, x: f32, y: f32, radius: f32) -> Option<usize> {
         let stations = &self.manifest.metro_stations;
-        if stations.len() < 2 {
-            return None;
-        }
-        let source = stations.iter().position(|station| {
+        (stations.len() >= 2).then_some(())?;
+        stations.iter().position(|station| {
             distance_squared(station.location.x, station.location.y, x, y)
                 <= (radius + 18.0).powi(2)
-        })?;
+        })
+    }
+
+    fn metro_destination_from(&self, source: usize) -> Option<(f32, f32)> {
+        let stations = &self.manifest.metro_stations;
+        if stations.len() < 2 || source >= stations.len() {
+            return None;
+        }
         let destination = &stations[(source + 1) % stations.len()].location;
         Some((destination.x, destination.y))
     }
@@ -313,7 +317,7 @@ struct PlayerSummary {
     #[serde(skip_serializing)]
     fire_cooldown: f32,
     #[serde(skip_serializing)]
-    metro_cooldown: f32,
+    metro_armed: bool,
     #[serde(skip_serializing)]
     grenade_cooldown: f32,
     #[serde(skip_serializing)]
@@ -1198,18 +1202,9 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
         }
 
         player.fire_cooldown = (player.fire_cooldown - dt).max(0.0);
-        player.metro_cooldown = (player.metro_cooldown - dt).max(0.0);
         player.grenade_cooldown = (player.grenade_cooldown - dt).max(0.0);
         simulate_player_movement(player, map, wall_pixels, dt);
-
-        if player.metro_cooldown <= 0.0
-            && let Some((x, y)) = map.metro_destination(player.x, player.y, PLAYER_RADIUS)
-        {
-            player.x = x;
-            player.y = y;
-            player.speed = 0.0;
-            player.metro_cooldown = METRO_COOLDOWN_SECONDS;
-        }
+        update_player_metro(player, map);
 
         if player.input.fire && player.fire_cooldown <= 0.0 {
             spawned.push(BulletSummary {
@@ -1245,6 +1240,23 @@ fn tick_room(room: &mut Room, map: &GameMap, dt: f32) {
     }
     room.bullets.extend(spawned);
     update_bullets(room, map, dt);
+}
+
+fn update_player_metro(player: &mut PlayerSummary, map: &GameMap) {
+    let Some(source) = map.metro_station_at(player.x, player.y, PLAYER_RADIUS) else {
+        player.metro_armed = true;
+        return;
+    };
+    if !player.metro_armed {
+        return;
+    }
+    let Some((x, y)) = map.metro_destination_from(source) else {
+        return;
+    };
+    player.x = x;
+    player.y = y;
+    player.speed = 0.0;
+    player.metro_armed = false;
 }
 
 fn simulate_player_movement(
@@ -1573,7 +1585,9 @@ fn respawn_player(player: &mut PlayerSummary, map: &GameMap, tick: u64) {
     player.invulnerable_until_tick = tick + SPAWN_PROTECTION_TICKS;
     player.input = ControlInput::default();
     player.fire_cooldown = 0.0;
-    player.metro_cooldown = METRO_COOLDOWN_SECONDS;
+    player.metro_armed = map
+        .metro_station_at(player.x, player.y, PLAYER_RADIUS)
+        .is_none();
     player.grenade_cooldown = 0.0;
 }
 
@@ -1606,7 +1620,7 @@ fn player_for_slot(
         input: ControlInput::default(),
         last_input_sequence: 0,
         fire_cooldown: 0.0,
-        metro_cooldown: METRO_COOLDOWN_SECONDS,
+        metro_armed: map.metro_station_at(x, y, PLAYER_RADIUS).is_none(),
         grenade_cooldown: 0.0,
         update_count: 0,
         last_update_millis: now_millis(),
@@ -1894,9 +1908,45 @@ mod tests {
         assert_eq!(map.spawn_for(1, 1), (122.0, 662.0));
         assert_eq!(map.manifest.metro_stations.len(), 4);
         assert_eq!(
-            map.metro_destination(1048.0, 215.0, PLAYER_RADIUS),
+            map.metro_station_at(1048.0, 215.0, PLAYER_RADIUS)
+                .and_then(|source| map.metro_destination_from(source)),
             Some((230.0, 367.0))
         );
+    }
+
+    #[test]
+    fn metro_only_triggers_on_entry_and_rearms_after_exit() {
+        let map = level_one();
+        let source = &map.manifest.metro_stations[0].location;
+        let destination = map
+            .metro_station_at(source.x, source.y, PLAYER_RADIUS)
+            .and_then(|source| map.metro_destination_from(source))
+            .expect("metro destination");
+        let mut player = player_for_slot("TEST", 1, true, "One", "one".to_owned(), &map);
+        player.x = source.x;
+        player.y = source.y;
+        player.speed = MAX_SPEED;
+        player.metro_armed = true;
+
+        update_player_metro(&mut player, &map);
+        assert_eq!((player.x, player.y), destination);
+        assert_eq!(player.speed, 0.0);
+        assert!(!player.metro_armed);
+
+        update_player_metro(&mut player, &map);
+        assert_eq!((player.x, player.y), destination);
+        assert!(!player.metro_armed);
+
+        player.x = 0.0;
+        player.y = 0.0;
+        update_player_metro(&mut player, &map);
+        assert!(player.metro_armed);
+
+        player.x = source.x;
+        player.y = source.y;
+        update_player_metro(&mut player, &map);
+        assert_eq!((player.x, player.y), destination);
+        assert!(!player.metro_armed);
     }
 
     #[test]

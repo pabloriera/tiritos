@@ -113,6 +113,18 @@ try {
 
   await playerOne.findElement(By.css("#designer-button")).click();
   await waitForDebugState(playerOne, (state) => state.mode === "designingMap");
+  const blankDesigner = await playerOne.executeScript(`return {
+    counts: document.querySelector('#designer-counts')?.textContent,
+    previewDisabled: document.querySelector('#designer-preview')?.disabled,
+    saveDisabled: document.querySelector('#designer-save')?.disabled,
+  }`);
+  if (
+    !blankDesigner.counts?.includes("Spawns 0/8")
+    || !blankDesigner.previewDisabled
+    || !blankDesigner.saveDisabled
+  ) {
+    throw new Error(`Designer did not start empty: ${JSON.stringify(blankDesigner)}`);
+  }
   await playerOne.executeScript(`
     const input = document.querySelector('#designer-name');
     input.value = 'Selenium Brushworks';
@@ -121,7 +133,8 @@ try {
   await playerOne.findElement(By.css('[data-tool="wall"]')).click();
   await drawDesignerGesture(playerOne, [[0.43, 0.5], [0.57, 0.5]]);
   await playerOne.findElement(By.css('[data-tool="spawn"]')).click();
-  await drawDesignerGesture(playerOne, [[0.5, 0.2]]);
+  await drawDesignerGesture(playerOne, [[0.2, 0.5]]);
+  await drawDesignerGesture(playerOne, [[0.8, 0.5]]);
   await playerOne.findElement(By.css('[data-tool="metro"]')).click();
   await drawDesignerGesture(playerOne, [[0.3, 0.3]]);
   await drawDesignerGesture(playerOne, [[0.7, 0.7]]);

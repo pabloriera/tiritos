@@ -121,6 +121,12 @@ type DesignerSpawn = MapLocation & {
   color: string;
 };
 
+type DesignerSnapshot = {
+  pixels: ImageData;
+  spawns: DesignerSpawn[];
+  metros: MapLocation[];
+};
+
 type DesignerState = {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
@@ -136,6 +142,7 @@ type DesignerState = {
   lastPoint: MapLocation | null;
   saving: boolean;
   message: string;
+  history: DesignerSnapshot[];
 };
 
 type MapFit = {
@@ -208,7 +215,6 @@ const BULLET_CRATER_RADIUS = 5;
 const GRENADE_SPEED = 285;
 const GRENADE_LIFETIME_SECONDS = 1.15;
 const GRENADE_COOLDOWN_SECONDS = 2;
-const METRO_COOLDOWN_SECONDS = 1.5;
 const GRENADE_CRATER_RADIUS = 46;
 const GRENADE_BLAST_RADIUS = 72;
 const WALL_FIELD_RADIUS = 38;
@@ -276,7 +282,7 @@ let sandboxNextProjectileId = -1;
 let sandboxNextBlastId = -1;
 let sandboxFireCooldown = 0;
 let sandboxGrenadeCooldown = 0;
-let localMetroCooldown = METRO_COOLDOWN_SECONDS;
+let localMetroArmed = true;
 let designerState: DesignerState | null = null;
 
 renderGameShell();
@@ -338,20 +344,53 @@ function renderGameShell() {
         </div>
         <p id="ws-status" class="connection-line"></p>
         <div id="designer-controls" class="designer-controls" hidden>
-          <input id="designer-name" class="designer-name" maxlength="40" value="Untitled Arena" aria-label="Map name">
-          <div class="tool-group" role="group" aria-label="Drawing tool">
-            <button type="button" class="tool-button" data-tool="wall">Wall</button>
-            <button type="button" class="tool-button" data-tool="erase">Erase</button>
-            <button type="button" class="tool-button" data-tool="spawn">Spawn</button>
-            <button type="button" class="tool-button" data-tool="metro">Metro</button>
+          <div class="ribbon-group map-tools">
+            <input id="designer-name" class="designer-name" maxlength="40" value="Untitled Arena" aria-label="Map name">
+            <button id="designer-undo" class="ribbon-button compact" type="button" title="Undo last change" disabled><span aria-hidden="true">↶</span> Undo</button>
+            <button id="designer-clear" class="ribbon-button compact" type="button" title="Clear the canvas"><span aria-hidden="true">▱</span> Clear</button>
+            <span class="ribbon-label">Map</span>
           </div>
-          <label class="brush-control">Size <input id="designer-brush" type="range" min="4" max="80" value="24"></label>
-          <input id="designer-color" type="color" aria-label="Spawn color">
-          <button id="designer-random-color" class="hud-button" type="button" title="Random spawn color">Random</button>
-          <button id="designer-preview" class="hud-button" type="button">Preview</button>
-          <button id="designer-save" class="hud-button primary" type="button">Save</button>
-          <button id="designer-cancel" class="hud-button" type="button">Cancel</button>
-          <span id="designer-message" class="designer-message"></span>
+          <div class="ribbon-group tool-group" role="group" aria-label="Map tools">
+            <button type="button" class="tool-button" data-tool="wall" title="Paint solid walls"><span class="tool-glyph" aria-hidden="true">▰</span><span>Wall</span></button>
+            <button type="button" class="tool-button" data-tool="erase" title="Erase walls and markers"><span class="tool-glyph eraser-glyph" aria-hidden="true">▱</span><span>Eraser</span></button>
+            <button type="button" class="tool-button" data-tool="spawn" title="Place a player spawn"><span class="tool-glyph spawn-glyph" aria-hidden="true">●</span><span>Spawn</span></button>
+            <button type="button" class="tool-button" data-tool="metro" title="Place paired metro stations"><span class="tool-glyph metro-glyph" aria-hidden="true">M</span><span>Metro</span></button>
+            <span class="ribbon-label">Tools</span>
+          </div>
+          <div class="ribbon-group size-tools">
+            <label class="brush-control" for="designer-brush">Brush</label>
+            <select id="designer-brush" aria-label="Brush size">
+              <option value="8">8 px</option>
+              <option value="16">16 px</option>
+              <option value="24" selected>24 px</option>
+              <option value="40">40 px</option>
+              <option value="64">64 px</option>
+              <option value="80">80 px</option>
+            </select>
+            <span class="brush-preview" aria-hidden="true"></span>
+            <span class="ribbon-label">Size</span>
+          </div>
+          <div class="ribbon-group color-tools">
+            <input id="designer-color" type="color" aria-label="Spawn color" title="Choose spawn color">
+            <div class="color-swatches" role="group" aria-label="Spawn color presets">
+              <button type="button" class="color-swatch" data-designer-color="#23e8ec" style="--swatch: #23e8ec" aria-label="Cyan spawn"></button>
+              <button type="button" class="color-swatch" data-designer-color="#ff4ccf" style="--swatch: #ff4ccf" aria-label="Magenta spawn"></button>
+              <button type="button" class="color-swatch" data-designer-color="#f5e642" style="--swatch: #f5e642" aria-label="Yellow spawn"></button>
+              <button type="button" class="color-swatch" data-designer-color="#47ef75" style="--swatch: #47ef75" aria-label="Green spawn"></button>
+            </div>
+            <button id="designer-random-color" class="ribbon-button compact" type="button" title="Pick a random spawn color">Random</button>
+            <span class="ribbon-label">Spawn color</span>
+          </div>
+          <div class="ribbon-group play-tools">
+            <button id="designer-preview" class="ribbon-button preview" type="button"><span aria-hidden="true">▶</span> Preview</button>
+            <button id="designer-save" class="ribbon-button primary" type="button"><span aria-hidden="true">▣</span> Save</button>
+            <button id="designer-cancel" class="ribbon-button" type="button">Maps</button>
+            <span class="ribbon-label">Play &amp; save</span>
+          </div>
+          <div class="designer-status" role="status">
+            <strong id="designer-counts">Spawns 0/8 · Metro 0/16</strong>
+            <span id="designer-message" class="designer-message"></span>
+          </div>
         </div>
       </section>
     </main>
@@ -385,6 +424,17 @@ async function renderRoomPage(
 
 function installKeyboardControls() {
   window.addEventListener("keydown", (event) => {
+    if (
+      activeMode === "designingMap"
+      && (event.ctrlKey || event.metaKey)
+      && event.key.toLowerCase() === "z"
+      && !(document.activeElement instanceof HTMLInputElement)
+    ) {
+      event.preventDefault();
+      undoDesignerChange();
+      return;
+    }
+
     if (event.key === "Escape") {
       event.preventDefault();
       if (activeMode === "previewingDesign") {
@@ -472,9 +522,11 @@ function installDesignerControls() {
   const designerButton = document.querySelector<HTMLButtonElement>("#designer-button");
   const controls = document.querySelector<HTMLElement>("#designer-controls");
   const nameInput = document.querySelector<HTMLInputElement>("#designer-name");
-  const brushInput = document.querySelector<HTMLInputElement>("#designer-brush");
+  const brushInput = document.querySelector<HTMLSelectElement>("#designer-brush");
   const colorInput = document.querySelector<HTMLInputElement>("#designer-color");
   const randomButton = document.querySelector<HTMLButtonElement>("#designer-random-color");
+  const undoButton = document.querySelector<HTMLButtonElement>("#designer-undo");
+  const clearButton = document.querySelector<HTMLButtonElement>("#designer-clear");
   const previewButton = document.querySelector<HTMLButtonElement>("#designer-preview");
   const saveButton = document.querySelector<HTMLButtonElement>("#designer-save");
   const cancelButton = document.querySelector<HTMLButtonElement>("#designer-cancel");
@@ -483,6 +535,8 @@ function installDesignerControls() {
   cancelButton?.addEventListener("click", exitDesignerMode);
   saveButton?.addEventListener("click", () => void saveDesignedMap());
   previewButton?.addEventListener("click", toggleDesignerPreview);
+  undoButton?.addEventListener("click", undoDesignerChange);
+  clearButton?.addEventListener("click", clearDesignerMap);
   randomButton?.addEventListener("click", () => {
     if (!designerState || !colorInput) {
       return;
@@ -506,6 +560,14 @@ function installDesignerControls() {
     }
   });
   controls?.addEventListener("click", (event) => {
+    const colorButton = (event.target as HTMLElement)
+      .closest<HTMLButtonElement>("[data-designer-color]");
+    if (designerState && colorInput && colorButton?.dataset.designerColor) {
+      designerState.color = colorButton.dataset.designerColor;
+      colorInput.value = designerState.color;
+      updateHud();
+      return;
+    }
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tool]");
     const tool = button?.dataset.tool as DesignerTool | undefined;
     if (designerState && tool) {
@@ -523,8 +585,12 @@ function installDesignerControls() {
   canvas.addEventListener("pointermove", handleDesignerPointerMove);
   window.addEventListener("pointerup", () => {
     if (designerState) {
+      const finishedStroke = designerState.drawing;
       designerState.drawing = false;
       designerState.lastPoint = null;
+      if (finishedStroke) {
+        updateHud();
+      }
     }
   });
 }
@@ -553,19 +619,13 @@ function enterDesignerMode() {
     tool: "wall",
     brushSize: 24,
     color: firstColor,
-    spawns: [
-      { x: 100, y: designCanvas.height / 2, color: firstColor },
-      {
-        x: designCanvas.width - 100,
-        y: designCanvas.height / 2,
-        color: randomPlayerColor(),
-      },
-    ],
+    spawns: [],
     metros: [],
     drawing: false,
     lastPoint: null,
     saving: false,
-    message: "Draw walls; right-click a spawn or metro to remove it.",
+    message: "Blank canvas — paint walls, then place at least 2 spawns.",
+    history: [],
   };
   resetSandbox();
   activeMode = "designingMap";
@@ -593,11 +653,16 @@ function toggleDesignerPreview() {
 }
 
 function startDesignerPreview() {
-  if (!designerState || designerState.spawns.length === 0) {
+  if (!designerState || designerState.spawns.length < 2) {
     if (designerState) {
-      designerState.message = "Add a spawn point before previewing.";
+      designerState.message = "Preview needs at least 2 player spawns.";
       updateHud();
     }
+    return;
+  }
+  if (designerState.metros.length === 1) {
+    designerState.message = "A metro needs a destination; place a second station.";
+    updateHud();
     return;
   }
   const previewCanvas = buildDesignerPreviewCanvas(designerState);
@@ -632,6 +697,7 @@ function startDesignerPreview() {
   vehicle = { x: spawn.x, y: spawn.y, heading: 0, speed: 0 };
   designerState.message = "Previewing unsaved map · Arrow keys · Space fire";
   activeMode = "previewingDesign";
+  localMetroArmed = localMetroStationIndex() < 0;
   resizeCanvas();
   updateHud();
 }
@@ -641,7 +707,7 @@ function stopDesignerPreview() {
     return;
   }
   resetSandbox();
-  designerState.message = "Draw walls; right-click a spawn or metro to remove it.";
+  designerState.message = "Editing again — use Eraser to remove walls or markers.";
   activeMode = "designingMap";
   resizeCanvas();
   updateHud();
@@ -684,6 +750,7 @@ function handleDesignerPointerDown(event: PointerEvent) {
     return;
   }
   if (designerState.tool === "wall" || designerState.tool === "erase") {
+    pushDesignerHistory();
     designerState.drawing = true;
     designerState.lastPoint = point;
     paintDesignerStroke(point, point);
@@ -696,16 +763,27 @@ function handleDesignerPointerDown(event: PointerEvent) {
     const existing = nearestPointIndex(designerState.spawns, point, 20);
     if (existing >= 0) {
       const spawn = designerState.spawns[existing];
-      if (spawn) {
+      if (spawn && spawn.color !== designerState.color) {
+        pushDesignerHistory();
         spawn.color = designerState.color;
+        designerState.message = "Spawn color updated.";
       }
     } else if (designerState.spawns.length < 8) {
+      pushDesignerHistory();
       designerState.spawns.push({ ...point, color: designerState.color });
+      designerState.color = randomPlayerColor();
+      designerState.message = designerState.spawns.length < 2
+        ? "Add one more spawn to make the map playable."
+        : "Spawn added with a random color. Preview is now available.";
     } else {
       designerState.message = "A map can have at most 8 spawns.";
     }
   } else if (designerState.metros.length < 16) {
+    pushDesignerHistory();
     designerState.metros.push(point);
+    designerState.message = designerState.metros.length % 2 === 0
+      ? "Metro pair completed."
+      : "Place another metro station to complete the pair.";
   } else {
     designerState.message = "A map can have at most 16 metro stations.";
   }
@@ -753,6 +831,9 @@ function paintDesignerStroke(from: MapLocation, to: MapLocation) {
   context.moveTo(from.x, from.y);
   context.lineTo(to.x + 0.01, to.y + 0.01);
   context.stroke();
+  if (designerState.tool === "erase") {
+    eraseDesignerMarkers(from, to, designerState.brushSize / 2 + 8);
+  }
 }
 
 function removeDesignerMarker(point: MapLocation) {
@@ -761,14 +842,93 @@ function removeDesignerMarker(point: MapLocation) {
   }
   const spawnIndex = nearestPointIndex(designerState.spawns, point, 24);
   if (spawnIndex >= 0) {
+    pushDesignerHistory();
     designerState.spawns.splice(spawnIndex, 1);
+    designerState.message = "Spawn removed.";
   } else {
     const metroIndex = nearestPointIndex(designerState.metros, point, 28);
     if (metroIndex >= 0) {
+      pushDesignerHistory();
       designerState.metros.splice(metroIndex, 1);
+      designerState.message = "Metro station removed.";
     }
   }
   updateHud();
+}
+
+function pushDesignerHistory() {
+  if (!designerState) {
+    return;
+  }
+  designerState.history.push({
+    pixels: designerState.context.getImageData(
+      0,
+      0,
+      designerState.width,
+      designerState.height,
+    ),
+    spawns: designerState.spawns.map((spawn) => ({ ...spawn })),
+    metros: designerState.metros.map((metro) => ({ ...metro })),
+  });
+  if (designerState.history.length > 10) {
+    designerState.history.shift();
+  }
+}
+
+function undoDesignerChange() {
+  if (!designerState || activeMode !== "designingMap") {
+    return;
+  }
+  const snapshot = designerState.history.pop();
+  if (!snapshot) {
+    designerState.message = "Nothing to undo yet.";
+    updateHud();
+    return;
+  }
+  designerState.context.putImageData(snapshot.pixels, 0, 0);
+  designerState.spawns = snapshot.spawns;
+  designerState.metros = snapshot.metros;
+  designerState.message = "Last change undone.";
+  updateHud();
+}
+
+function clearDesignerMap() {
+  if (!designerState || activeMode !== "designingMap") {
+    return;
+  }
+  pushDesignerHistory();
+  designerState.context.fillStyle = FLOOR_COLOR;
+  designerState.context.fillRect(0, 0, designerState.width, designerState.height);
+  designerState.spawns = [];
+  designerState.metros = [];
+  designerState.message = "Canvas cleared. Undo restores the previous design.";
+  updateHud();
+}
+
+function eraseDesignerMarkers(from: MapLocation, to: MapLocation, radius: number) {
+  if (!designerState) {
+    return;
+  }
+  designerState.spawns = designerState.spawns.filter(
+    (spawn) => distanceFromSegment(spawn, from, to) > radius,
+  );
+  designerState.metros = designerState.metros.filter(
+    (metro) => distanceFromSegment(metro, from, to) > radius,
+  );
+}
+
+function distanceFromSegment(point: MapLocation, from: MapLocation, to: MapLocation) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    return Math.hypot(point.x - from.x, point.y - from.y);
+  }
+  const amount = Math.max(
+    0,
+    Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared),
+  );
+  return Math.hypot(point.x - (from.x + amount * dx), point.y - (from.y + amount * dy));
 }
 
 function nearestPointIndex(points: MapLocation[], target: MapLocation, radius: number) {
@@ -1171,6 +1331,7 @@ async function setActiveMap(map: MapSummary | null) {
       heading: 0,
       speed: 0,
     };
+    localMetroArmed = localMetroStationIndex() < 0;
   } else {
     syncVehicleSlot();
   }
@@ -1182,7 +1343,7 @@ function resetSandbox() {
   sandboxCraters = [];
   sandboxFireCooldown = 0;
   sandboxGrenadeCooldown = 0;
-  localMetroCooldown = METRO_COOLDOWN_SECONDS;
+  localMetroArmed = true;
   blastEffects = [];
 }
 
@@ -1207,6 +1368,7 @@ function syncVehicleSlot() {
     speed: serverPlayer?.speed ?? 0,
   };
   vehicleSlot = slot;
+  localMetroArmed = localMetroStationIndex() < 0;
 }
 
 function syncRenderSnapshot(room: Room) {
@@ -1564,7 +1726,6 @@ function updateVehicle(deltaSeconds: number) {
 }
 
 function simulateClientVehicle(deltaSeconds: number) {
-  localMetroCooldown = Math.max(0, localMetroCooldown - deltaSeconds);
   const turnInput =
     Number(activeKeys.has("ArrowRight")) - Number(activeKeys.has("ArrowLeft"));
   const movingFactor =
@@ -1612,25 +1773,36 @@ function simulateClientVehicle(deltaSeconds: number) {
     vehicle.speed *= 0.18;
   }
 
-  if (localMetroCooldown <= 0) {
-    const stations = activeMode === "previewingDesign"
-      ? designerState?.metros ?? []
-      : activeMap?.metroStations ?? [];
-    const sourceIndex = stations.findIndex(
-      (station) =>
-        (station.x - vehicle.x) ** 2 + (station.y - vehicle.y) ** 2 <=
-        (PLAYER_RADIUS + 18) ** 2,
-    );
-    if (sourceIndex >= 0 && stations.length >= 2) {
-      const destination = stations[(sourceIndex + 1) % stations.length];
-      if (destination) {
-        vehicle.x = destination.x;
-        vehicle.y = destination.y;
-        vehicle.speed = 0;
-        localMetroCooldown = METRO_COOLDOWN_SECONDS;
-      }
+  const stations = localMetroStations();
+  const sourceIndex = localMetroStationIndex(stations);
+  if (sourceIndex < 0) {
+    localMetroArmed = true;
+  } else if (localMetroArmed && stations.length >= 2) {
+    const destination = stations[(sourceIndex + 1) % stations.length];
+    if (destination) {
+      vehicle.x = destination.x;
+      vehicle.y = destination.y;
+      vehicle.speed = 0;
+      localMetroArmed = false;
     }
   }
+}
+
+function localMetroStations() {
+  return activeMode === "previewingDesign"
+    ? designerState?.metros ?? []
+    : activeMap?.metroStations ?? [];
+}
+
+function localMetroStationIndex(stations = localMetroStations()) {
+  if (stations.length < 2) {
+    return -1;
+  }
+  return stations.findIndex(
+    (station) =>
+      (station.x - vehicle.x) ** 2 + (station.y - vehicle.y) ** 2 <=
+      (PLAYER_RADIUS + 18) ** 2,
+  );
 }
 
 function canOccupy(x: number, y: number) {
@@ -2096,18 +2268,32 @@ function updateHud() {
   const designerButton = document.querySelector<HTMLButtonElement>("#designer-button");
   const designerControls = document.querySelector<HTMLElement>("#designer-controls");
   const designerName = document.querySelector<HTMLInputElement>("#designer-name");
-  const designerBrush = document.querySelector<HTMLInputElement>("#designer-brush");
+  const designerBrush = document.querySelector<HTMLSelectElement>("#designer-brush");
   const designerColor = document.querySelector<HTMLInputElement>("#designer-color");
+  const designerUndo = document.querySelector<HTMLButtonElement>("#designer-undo");
   const designerPreview = document.querySelector<HTMLButtonElement>("#designer-preview");
   const designerSave = document.querySelector<HTMLButtonElement>("#designer-save");
+  const designerCounts = document.querySelector<HTMLElement>("#designer-counts");
   const designerMessage = document.querySelector<HTMLElement>("#designer-message");
 
   const designerVisible = activeMode === "designingMap" || activeMode === "previewingDesign";
+  const previewVisible = activeMode === "previewingDesign";
+  const designerLayoutChanged = document.documentElement.classList.contains("designer-mode")
+    !== designerVisible;
+  document.documentElement.classList.toggle("designer-mode", designerVisible);
+  document.documentElement.classList.toggle("designer-preview-mode", previewVisible);
+  if (designerLayoutChanged) {
+    window.requestAnimationFrame(resizeCanvas);
+  }
   if (hud) {
     hud.dataset.stage = getHudStage();
   }
   hud?.classList.toggle("designer-active", designerVisible);
-  hud?.classList.toggle("preview-active", activeMode === "previewingDesign");
+  hud?.classList.toggle("preview-active", previewVisible);
+  hud?.style.setProperty(
+    "--brush-preview-size",
+    `${Math.max(6, Math.min(22, designerState?.brushSize ?? 24))}px`,
+  );
 
   if (modeLine) {
     setTextIfChanged(modeLine, getModeText());
@@ -2170,18 +2356,43 @@ function updateHud() {
     if (designerColor) {
       designerColor.value = designerState.color;
     }
+    if (designerUndo) {
+      designerUndo.disabled = designerState.history.length === 0
+        || previewVisible;
+    }
     if (designerSave) {
-      designerSave.disabled = designerState.saving;
-      designerSave.textContent = designerState.saving ? "Saving…" : "Save";
+      designerSave.disabled = designerState.saving
+        || designerState.spawns.length < 2
+        || designerState.metros.length === 1;
+      designerSave.innerHTML = designerState.saving
+        ? "Saving…"
+        : "<span aria-hidden=\"true\">▣</span> Save";
     }
     if (designerPreview) {
-      designerPreview.textContent = activeMode === "previewingDesign" ? "Back to edit" : "Preview";
+      designerPreview.disabled = !previewVisible && (
+        designerState.spawns.length < 2 || designerState.metros.length === 1
+      );
+      designerPreview.innerHTML = activeMode === "previewingDesign"
+        ? "<span aria-hidden=\"true\">↶</span> Back to edit"
+        : "<span aria-hidden=\"true\">▶</span> Preview";
+    }
+    if (designerCounts) {
+      setTextIfChanged(
+        designerCounts,
+        `Spawns ${designerState.spawns.length}/8 · Metro ${designerState.metros.length}/16`,
+      );
     }
     if (designerMessage) {
       setTextIfChanged(designerMessage, designerState.message);
     }
     for (const toolButton of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
       toolButton.classList.toggle("active", toolButton.dataset.tool === designerState.tool);
+    }
+    for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-designer-color]")) {
+      swatch.classList.toggle(
+        "active",
+        swatch.dataset.designerColor?.toLowerCase() === designerState.color.toLowerCase(),
+      );
     }
   }
 
